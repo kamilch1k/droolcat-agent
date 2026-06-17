@@ -360,7 +360,7 @@ export function layout(model) {
   }
 
   const roots = nodes.filter((n) => primaryParent[n.id] == null).map((n) => n.id);
-  const COL = 212, VGAP = 40;
+  const COL = 212, VGAP = 26;
   const x = {};
   let cursor = 0;
   const place = (id) => {

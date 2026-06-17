@@ -110,8 +110,10 @@ fn run_claude(app: AppHandle, session_id: String, prompt: String, cwd: String, r
         .arg("--disallowedTools")
         .arg("AskUserQuestion");
     if edits {
-        // let the agent actually write/edit files in the chat's folder
-        cmd.arg("--permission-mode").arg("acceptEdits").arg("--add-dir").arg(&cwd);
+        // bypass ALL permission prompts so the agent just does the work in the
+        // chat's folder (no approval friction). On by default; the chat's
+        // toggle can turn it off for a read-only session.
+        cmd.arg("--permission-mode").arg("bypassPermissions");
     }
     if let Some(r) = resume.filter(|s| !s.trim().is_empty()) {
         cmd.arg("--resume").arg(r);

@@ -44,7 +44,7 @@ const curChat = () => (cur >= 0 ? sessions[cur] : null);
 const chatById = (id) => sessions.find((s) => s.id === id);
 
 function newSession() {
-  const s = { id: newId(), title: "New chat", claudeSessionId: null, graph: new GraphModel(), cwd: "", edits: false };
+  const s = { id: newId(), title: "New chat", claudeSessionId: null, graph: new GraphModel(), cwd: "", edits: true };
   sessions.push(s);
   switchSession(sessions.length - 1);
 }

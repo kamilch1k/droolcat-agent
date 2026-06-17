@@ -271,6 +271,7 @@ export class Canvas {
     let dr = 0, sx, sy, cx0, cy0;
     this.viewport.addEventListener("mousedown", (e) => {
       dr = 1; this.viewport.classList.add("drag");
+      this.world.style.transition = "none"; // instant while dragging
       sx = e.clientX; sy = e.clientY; cx0 = this.cam.x; cy0 = this.cam.y;
     });
     window.addEventListener("mousemove", (e) => {
@@ -281,6 +282,7 @@ export class Canvas {
     this.viewport.addEventListener("click", () => this.deselect());
     this.viewport.addEventListener("wheel", (e) => {
       e.preventDefault();
+      this.world.style.transition = "none"; // instant zoom under the cursor
       const r = this.viewport.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
       const f = e.deltaY < 0 ? 1.1 : 1 / 1.1, ns = Math.min(2, Math.max(0.25, this.cam.s * f));
       this.cam.x = mx - (mx - this.cam.x) * (ns / this.cam.s);
@@ -288,11 +290,13 @@ export class Canvas {
       this.cam.s = ns; this._applyCam();
     }, { passive: false });
   }
+  // animate the next programmatic camera move (follow / fit / zoom buttons)
+  _easeCam() { this.world.style.transition = "transform .32s cubic-bezier(.4,0,.2,1)"; }
   _applyCam() {
     this.world.style.transform = `translate(${this.cam.x}px,${this.cam.y}px) scale(${this.cam.s})`;
     if (this.zl) this.zl.textContent = Math.round(this.cam.s * 100) + "%";
   }
-  zoom(f) { this.cam.s = Math.min(2, Math.max(0.25, this.cam.s * f)); this._applyCam(); }
+  zoom(f) { this.cam.s = Math.min(2, Math.max(0.25, this.cam.s * f)); this._easeCam(); this._applyCam(); }
   fit() {
     const m = this.model; if (!m || !m.nodes.length) return;
     let a = 1e9, b = 1e9, c = -1e9, d = -1e9;
@@ -304,6 +308,7 @@ export class Canvas {
     this.cam.s = Math.min(1.05, Math.max(0.25, Math.min(sw, sh)));
     this.cam.x = pad - a * this.cam.s + (r.width - pad * 2 - (c - a) * this.cam.s) / 2;
     this.cam.y = pad - b * this.cam.s;
+    this._easeCam();
     this._applyCam();
   }
 
@@ -317,6 +322,7 @@ export class Canvas {
     const s = this.cam.s;
     this.cam.x = r.width / 2 - (n.x + n.w / 2) * s;
     this.cam.y = r.height * 0.6 - (n.y + n.h / 2) * s;
+    this._easeCam();
     this._applyCam();
   }
 }
