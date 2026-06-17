@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "droolcat-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "C:\\Users\\rewwe\\Desktop\\droolcat-agent", "run", "dev"],
+      "port": 1420
+    }
+  ]
+}

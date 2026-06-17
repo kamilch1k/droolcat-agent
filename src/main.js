@@ -70,21 +70,27 @@ function ingest(evt) {
 function scheduleSync() {
   if (syncQueued) return;
   syncQueued = true;
-  requestAnimationFrame(() => {
+  const run = () => {
+    if (!syncQueued) return; // already ran via the other path
     syncQueued = false;
     canvas.sync();
     renderWts();
     if (autoFit) canvas.fit();
-  });
+  };
+  // rAF batches bursts on a visible window; the timeout is a fallback for when
+  // the window is backgrounded (rAF throttled to never).
+  requestAnimationFrame(run);
+  setTimeout(run, 120);
 }
 
 // ---- prompt + sources ---------------------------------------------------
 
 async function sendPrompt(text, steerNode) {
+  // sample mode ignores prompt content — it replays the captured transcript
+  if (source === "sample") { replaySample(); return; }
+
   text = (text || "").trim();
   if (!text) return;
-
-  if (source === "sample") { replaySample(); return; }
 
   const t = await getTauri();
   if (!t) { setConn("err", "no bridge — switch to sample"); return; }

@@ -59,11 +59,12 @@ export class Canvas {
         el.addEventListener("click", (e) => { e.stopPropagation(); this.select(n.id); });
         this.world.appendChild(el);
         this.els[n.id] = el;
-        el.dataset.fresh = "1";
       }
+      // base class is set once; render() owns the state classes (show/running/sel/dim)
+      const base = "cnode t-" + n.type + (n.kind ? " k-" + n.kind : "");
+      if (el._base !== base) { el.className = base; el._base = base; }
       const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.summary ? n.summary.length : 0}|${n.merged || ""}|${n.model || ""}`;
       if (el._sig !== sig) { el.innerHTML = this._card(n); el._sig = sig; }
-      el.className = "cnode t-" + n.type + (n.kind ? " k-" + n.kind : "");
     }
 
     for (const e of m.edges) {
@@ -77,15 +78,10 @@ export class Canvas {
     }
 
     if (this.empty) this.empty.classList.toggle("hide", m.nodes.length > 0);
+    // force a reflow so freshly-appended nodes transition in (no rAF dependency —
+    // the window may be backgrounded, where rAF is throttled to never)
+    void this.world.offsetHeight;
     this.render();
-
-    // animate freshly inserted nodes
-    requestAnimationFrame(() => {
-      for (const id in this.els) {
-        const el = this.els[id];
-        if (el.dataset.fresh) { el.classList.add("show"); delete el.dataset.fresh; }
-      }
-    });
   }
 
   render() {
@@ -95,7 +91,7 @@ export class Canvas {
     for (const n of m.nodes) {
       const el = this.els[n.id]; if (!el) continue;
       el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.w}px`;
-      if (!el.dataset.fresh) el.classList.add("show");
+      el.classList.add("show");
       el.classList.toggle("running", n.status === "run");
       el.classList.toggle("sel", n.id === this.selected);
       el.classList.toggle("dim", !!(this.selWt && n.wt && n.wt !== this.selWt));
@@ -271,6 +267,8 @@ export class Canvas {
     let a = 1e9, b = 1e9, c = -1e9, d = -1e9;
     for (const n of m.nodes) { a = Math.min(a, n.x); b = Math.min(b, n.y); c = Math.max(c, n.x + n.w); d = Math.max(d, n.y + n.h); }
     const r = this.viewport.getBoundingClientRect(), pad = 56;
+    if (r.width < 2 || r.height < 2) return; // window hidden/zero-size — skip
+
     const sw = (r.width - pad * 2) / (c - a), sh = (r.height - pad * 2) / (d - b);
     this.cam.s = Math.min(1.05, Math.max(0.25, Math.min(sw, sh)));
     this.cam.x = pad - a * this.cam.s + (r.width - pad * 2 - (c - a) * this.cam.s) / 2;
