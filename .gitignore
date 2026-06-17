@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+
+# frontend build
+dist/
+
+# vite
+.vite/
+
+# rust / tauri build artifacts
+src-tauri/target/
+src-tauri/gen/
+
+# captured transcripts (the bridge tees live sessions here)
+sessions/
+*.local.jsonl
+
+# os / editor
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/

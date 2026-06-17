@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Droolcat Agent</title>
+<link rel="stylesheet" href="/src/styles.css"/>
+</head>
+<body>
+<div class="frame"><div class="window">
+  <div class="chrome">
+    <span class="d"></span><span class="d"></span><span class="d"></span>
+    <span class="nm">droolcat</span>
+    <span class="conn" id="conn" title="bridge status">offline</span>
+  </div>
+  <div class="body">
+    <aside class="side">
+      <div class="newbtn" id="newsession"><span class="aw-ic" id="ic-plus"></span>New session</div>
+      <div class="seclabel">Sessions</div>
+      <div id="sesslist"></div>
+      <div class="seclabel">Worktrees</div><div id="wtlist"></div>
+    </aside>
+    <div class="col">
+      <div class="toolbar">
+        <span class="h" id="sesstitle">No session</span>
+        <span class="aw-pill p-info" id="headpill"></span>
+        <span class="spacer"></span>
+        <div class="srcsel" id="srcsel">
+          <button data-src="live" class="active">live</button>
+          <button data-src="sample">sample</button>
+        </div>
+        <button class="replay" id="replay"><span class="aw-ic" id="ic-play"></span>replay</button>
+        <div class="zc"><button id="zout">−</button><span class="zl" id="zl">100%</span><button id="zin">+</button><button id="fit">fit</button></div>
+      </div>
+      <div class="viewport" id="viewport"><div class="world" id="world"><svg class="edges" id="edges"></svg></div>
+        <div class="empty" id="empty">
+          <div class="emptyinner">
+            <div class="emptyic" id="ic-empty"></div>
+            <div class="emptyh">Drive Claude Code as a graph</div>
+            <div class="emptyp">Type a prompt below to start a live <code>claude -p</code> session, or switch to <b>sample</b> to replay a captured transcript.</div>
+          </div>
+        </div>
+      </div>
+      <div class="promptbar">
+        <div class="target" id="target"><span class="sw" style="background:var(--wt-main)"></span>orchestrator</div>
+        <input class="pinput" id="prompt" placeholder="Message your agents — a new turn branches from the last result…"/>
+        <button class="sendbtn" id="send"><span class="aw-ic" id="ic-up"></span></button>
+      </div>
+    </div>
+    <div class="inspector" id="inspector"><div class="inwrap" id="inwrap"></div></div>
+  </div>
+</div></div>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
