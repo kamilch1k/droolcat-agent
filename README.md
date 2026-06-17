@@ -1,16 +1,17 @@
 # Droolcat Agent
 
-> A visual cockpit on top of the Claude Code CLI. Droolcat drives Claude Code
-> headless and turns a coding session into a live, navigable graph — agents,
-> tool calls, reasoning, and (later) the project itself — instead of a
+> **Claude Code, with visual nodes.** Droolcat drives the Claude Code CLI
+> headless and turns a coding session into a live, navigable graph instead of a
 > scrolling wall of terminal text.
 
 Droolcat is a **layer on top of the Claude Code CLI — not a fork, not an
 extension.** It spawns and owns sessions (`claude -p --output-format
-stream-json --verbose`), consumes the structured event stream, and renders it
-as a spatial **Agent Graph**: an orchestrator fans out into agents, each
-agent's read / edit / write / bash calls appear beneath it, and everything
-funnels into a result node — live, as the stream arrives.
+stream-json --verbose`, resuming with `--resume` so context carries over),
+consumes the structured event stream, and renders it as a spatial **Agent
+Graph**: a **continuous conversation** where each prompt appends a turn —
+your message → the reads / edits / bash / subagents it runs → a result — and
+the next prompt continues below it. Multiple **chats** live in the sidebar; a
+second view maps the **project's code** as a file/import graph.
 
 This repo is the **driver model**, realized as a [Tauri](https://v2.tauri.app)
 desktop app: the Rust core owns the subprocess; the web canvas renders it.
@@ -25,19 +26,20 @@ desktop app: the Rust core owns the subprocess; the web canvas renders it.
  stream-json on stdout  ──►  Bridge: spawn + read lines  ──►  graph.js   reducer: event → graph mutation
    {type:"assistant",…}        tee raw transcript to disk      layout()   tidy-tree auto-layout (live)
    {type:"user",…}             emit `claude-event`        ──►  canvas.js  pan/zoom render + inspector
-   {type:"result",…}                                            main.js   sources, prompt bar, worktrees
+   {type:"result",…}                                            main.js   chats, turns, prompt bar
 ```
 
-| Brief step | Where it lives |
+| Piece | Where it lives |
 | --- | --- |
-| **Bridge** — spawn `claude -p`, read NDJSON, tee + broadcast | [`src-tauri/src/lib.rs`](src-tauri/src/lib.rs) |
-| **Parser / reducer** — event → graph mutation | [`src/graph.js`](src/graph.js) |
-| **Auto-layout** — positions for live, arbitrary trees | `layout()` in [`src/graph.js`](src/graph.js) |
-| **Graph canvas** — pan/zoom, status pills, inspector | [`src/canvas.js`](src/canvas.js) |
-| **Prompt + steering** — drive / retarget sessions | [`src/main.js`](src/main.js) |
+| **Bridge** — spawn `claude -p` (+`--resume`), read NDJSON, tee + broadcast | [`src-tauri/src/lib.rs`](src-tauri/src/lib.rs) |
+| **Reducer** — event → graph mutation; multi-turn (`beginTurn`/`apply`) | [`src/graph.js`](src/graph.js) |
+| **Auto-layout** — tidy tree for the growing turn chain | `layout()` in [`src/graph.js`](src/graph.js) |
+| **Canvas** — pan/zoom, status, inspector | [`src/canvas.js`](src/canvas.js) |
+| **Code Graph** — repo scan → file/import view | [`src/codegraph.js`](src/codegraph.js) + [`src-tauri/src/codegraph.rs`](src-tauri/src/codegraph.rs) |
+| **Chats + prompt** — sessions, multi-turn, view switch | [`src/main.js`](src/main.js) |
 
-The bridge emits four events: `claude-event` (one parsed stream-json object),
-`claude-stderr`, `claude-end` (`{ ok }`), `claude-error`.
+The bridge emits: `claude-event` (one parsed stream-json object),
+`claude-stderr`, `claude-end` (`{ ok }`).
 
 ---
 
@@ -83,22 +85,33 @@ Captured live transcripts are teed to `sessions/*.jsonl` (gitignored).
 
 ---
 
-## Milestones
+## Direction
 
-- [x] **1 · Prove the loop (flat).** Bridge → parser → Agent Graph for a single
-      real `claude -p` session, live.
-- [x] **2 · Parallelism + worktrees.** One driven `claude -p` subprocess per
-      lane in its own git worktree off a frozen base; deep per-agent detail;
-      human-gated sequential merge-back with conflict detection. The flat loop
-      is the N=1 case. (`milestone-2`)
-- [x] **3 · Code Graph.** Multi-language repo scanner (files + intra-repo import
+The product is **Claude Code with visual nodes**: a continuous, multi-turn
+conversation rendered as a growing graph, with multiple chats in the sidebar.
+
+The brief's worktree/parallel-orchestration milestone was **built and explored**
+(preserved at tag [`milestone-2`](https://github.com/kamilch1k/droolcat-agent/tree/milestone-2))
+but **removed from the product** — git worktrees / merge-back weren't the right
+surface for a chat-shaped tool. The code lives in history if it's ever wanted.
+
+## What works
+
+- [x] **Continuous Agent Graph.** Live `claude -p` rendered as turns; each prompt
+      appends below the previous result (no reset); `--resume` keeps context.
+      Multiple chats, switchable in the sidebar.
+- [x] **Code Graph.** Multi-language repo scanner (files + intra-repo import
       edges) → a directory-clustered structural graph; an `agents | code` view
-      switch; live highlight of the files the agent session is touching
-      (cross-link). (`milestone-3`)
-- [ ] **4 · Window Graph.** Workspace map tying editors, diffs, terminals, and
-      agent branches together.
-- [ ] **5 · Parity polish.** Surface MCP, hooks, slash commands, permissions,
-      plan mode, and checkpoints through the UI.
+      switch; highlight of the files the current chat has touched (cross-link).
+      (`milestone-3`)
+
+## Next
+
+- [ ] **Working directory per chat** — choose the repo a chat operates on
+      (right now live chats run in the home dir with default permissions).
+- [ ] **Live Code Graph** — refresh agent-touched highlights as edits stream.
+- [ ] **Parity polish** — MCP, hooks, slash commands, permissions, plan mode,
+      checkpoints surfaced in the UI.
 
 See [`docs/brief.md`](docs/brief.md) for the full product brief.
 

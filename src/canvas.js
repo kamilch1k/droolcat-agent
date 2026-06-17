@@ -63,15 +63,8 @@ export class Canvas {
       // base class is set once; render() owns the state classes (show/running/sel/dim)
       const base = "cnode t-" + n.type + (n.kind ? " k-" + n.kind : "");
       if (el._base !== base) { el.className = base; el._base = base; }
-      const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.summary ? n.summary.length : 0}|${n.merged || ""}|${n.model || ""}`;
-      if (el._sig !== sig) {
-        el.innerHTML = this._card(n);
-        el._sig = sig;
-        if (n.type === "result") {
-          const mb = el.querySelector(".mergebtn");
-          if (mb) mb.addEventListener("click", (e) => { e.stopPropagation(); this.onMerge && this.onMerge(n); });
-        }
-      }
+      const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.text || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.summary ? n.summary.length : 0}|${n.meta || ""}|${n.model || ""}`;
+      if (el._sig !== sig) { el.innerHTML = this._card(n); el._sig = sig; }
     }
 
     for (const e of m.edges) {
@@ -125,15 +118,12 @@ export class Canvas {
       if (m.headline) {
         this.headpill.className = "aw-pill";
         this.headpill.textContent = m.headline;
-      } else if (s.running > 0) {
+      } else if (s.busy) {
         this.headpill.className = "aw-pill p-info";
-        this.headpill.textContent = `${s.running} of ${s.agents} agents running`;
-      } else if (s.done) {
+        this.headpill.textContent = "working…";
+      } else if (s.turns > 0) {
         this.headpill.className = "aw-pill p-success";
-        this.headpill.textContent = "session complete";
-      } else if (s.nodes > 0) {
-        this.headpill.className = "aw-pill p-info";
-        this.headpill.textContent = "running…";
+        this.headpill.textContent = `${s.turns} turn${s.turns > 1 ? "s" : ""}`;
       } else {
         this.headpill.className = "aw-pill"; this.headpill.textContent = "";
       }
@@ -157,6 +147,9 @@ export class Canvas {
 
   _card(n) {
     const pill = `<span class="aw-pill pill"></span>`;
+    if (n.type === "prompt")
+      return `<div class="row"><span class="aw-ic">${I.user}</span><span class="lbl">You</span><span class="meta" style="margin-left:auto">turn ${n.turn || 1}</span></div>
+        <div class="prompttext">${esc(n.text || "")}</div>`;
     if (n.type === "orch")
       return `<div class="row"><span class="aw-ic">${I.orch}</span><span class="lbl">${esc(n.title)}</span>${pill}</div>
         <div class="osub" style="margin-top:5px">${esc(n.sub || "")}</div>
@@ -178,11 +171,9 @@ export class Canvas {
         <div class="file" style="margin-top:4px">${esc(n.dir || ".")}</div>
         <div class="fmeta">${n.importedBy || 0} in · ${n.imports || 0} out</div>`;
     if (n.type === "result")
-      return `<div class="rh"><span class="aw-ic" style="color:var(--color-text-success)">${I.check}</span>
-        <span class="lbl">${esc(n.title)}</span><span class="meta">result</span></div>
-        <div class="summary">${esc(clipSummary(n.summary))}</div>
-        <div class="rf"><span class="sw" style="width:8px;height:8px;border-radius:2px;background:var(--wt-main);display:inline-block"></span>${esc(n.merged || "")}
-        <button class="mergebtn">merge to main</button></div>`;
+      return `<div class="rh"><span class="aw-ic" style="color:${n.donePill && n.donePill.k === "danger" ? "var(--color-text-danger)" : "var(--color-text-success)"}">${I.check}</span>
+        <span class="lbl">${esc(n.title)}</span><span class="meta">${esc(n.meta || "")}</span></div>
+        <div class="summary">${esc(clipSummary(n.summary))}</div>`;
     return "";
   }
 
@@ -239,10 +230,11 @@ export class Canvas {
     else if (d.out) h += `<div class="blk"><h4>Output</h4><div class="code">${esc(d.out)}</div></div>`;
     if (d.events && d.events.length) h += `<div class="blk"><h4>Activity</h4><ul class="events">${d.events.map(([t, l]) => `<li><span class="t">${esc(t)}</span>${esc(l)}</li>`).join("")}</ul></div>`;
 
-    h += `<div class="insteer"><h4>Steer this ${n.type}</h4>
-      <textarea id="steertext" placeholder="e.g. reuse the existing useAuth hook"></textarea>
-      <div class="acts"><button class="btn" id="steeropen">open worktree</button>
-      <button class="btn primary" id="steersend">send to ${esc(n.title)} ↗</button></div></div>`;
+    if (n.type !== "file") {
+      h += `<div class="insteer"><h4>Follow up</h4>
+        <textarea id="steertext" placeholder="ask a follow-up — continues this session"></textarea>
+        <div class="acts"><button class="btn primary" id="steersend">send ↗</button></div></div>`;
+    }
     this.inwrap.innerHTML = h;
 
     const send = this.inwrap.querySelector("#steersend");
@@ -250,15 +242,13 @@ export class Canvas {
       const t = this.inwrap.querySelector("#steertext").value.trim();
       if (t && this.onSteer) this.onSteer(n, t);
     };
-    const open = this.inwrap.querySelector("#steeropen");
-    if (open) open.onclick = () => this.onOpenWorktree && this.onOpenWorktree(n);
     this.target.innerHTML = `<span class="sw" style="background:${this._wtColor(n.wt)}"></span>${esc(n.title)}`;
     this.render();
   }
   deselect() {
     this.selected = null;
     this.inspector.classList.remove("open");
-    this.target.innerHTML = `<span class="sw" style="background:var(--wt-main)"></span>orchestrator`;
+    this.target.innerHTML = `<span class="sw" style="background:var(--wt-main)"></span>session`;
     this.render();
   }
   _input(input) {

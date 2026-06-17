@@ -1,6 +1,8 @@
-// main.js — app wiring: sources (live bridge / sample replay) -> reducer -> canvas.
-// Milestone 2: handles the enveloped multi-lane protocol on both the live bridge
-// and the offline replayer, plus the parallel-orchestration trigger + merge-back.
+// main.js — app wiring for "Claude Code with visual nodes".
+//
+// Multiple CHATS in the sidebar; each chat is one continuous Claude Code
+// conversation rendered as a growing graph. Prompting APPENDS a turn (never
+// resets) and resumes the chat's Claude session so context carries over.
 import "./styles.css";
 import { I } from "./icons.js";
 import { GraphModel, layout } from "./graph.js";
@@ -14,35 +16,54 @@ $("ic-up").innerHTML = I.up;
 $("ic-play").innerHTML = I.play;
 $("ic-empty").innerHTML = I.graph;
 
-const model = new GraphModel();
 const canvas = new Canvas(
   {
     world: $("world"), edges: $("edges"), viewport: $("viewport"),
     inspector: $("inspector"), inwrap: $("inwrap"), headpill: $("headpill"),
     target: $("target"), empty: $("empty"), zl: $("zl"),
   },
-  { onSteer: (node, text) => sendPrompt(text, node), onMerge: onMerge, onOpenWorktree: onOpenWorktree }
+  { onSteer: (_node, text) => sendPrompt(text) }   // "follow up" from the inspector
 );
-canvas.setModel(model);
 
+// ---- session (chat) state ----------------------------------------------
+
+let sessions = [];        // [{ id, title, claudeSessionId, graph }]
+let cur = -1;             // index of the active chat
+let runningId = null;     // chat id whose claude turn is streaming
 const codeModel = new CodeGraphModel();
-let view = "agents";          // 'agents' | 'code'
+let view = "agents";      // 'agents' | 'code'
 let codeLoaded = false;
-let source = "live";          // 'live' | 'sample'
-let fixture = "flat";          // 'flat' | 'parallel' (sample mode)
-let parallel = false;          // live parallel-orchestration mode
-let rawEvents = [];            // captured lines of the current session (for replay)
+let source = "live";      // 'live' | 'sample'
 let tauri = null;
 let autoFit = true;
 let syncQueued = false;
-let mergePreviewed = false;
 
-// the current live orchestration (for merge / cleanup / stop)
-let live = { sessionId: null, cwd: null, baseBranch: null, lanes: [] };
-// canned merge-result from a parallel sample fixture (fired on merge click)
-let sampleMerge = null;
+const newId = () => "chat-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
+const curChat = () => (cur >= 0 ? sessions[cur] : null);
+const chatById = (id) => sessions.find((s) => s.id === id);
 
-// ---- Tauri detection + bridge wiring ------------------------------------
+function newSession() {
+  const s = { id: newId(), title: "New chat", claudeSessionId: null, graph: new GraphModel() };
+  sessions.push(s);
+  switchSession(sessions.length - 1);
+}
+
+function switchSession(i) {
+  if (i < 0 || i >= sessions.length) return;
+  cur = i;
+  view = "agents";
+  setView("agents");
+  canvas.setModel(sessions[i].graph);
+  canvas.selWt = null;
+  canvas.deselect();
+  $("sesstitle").textContent = sessions[i].title;
+  autoFit = true;
+  renderSessions();
+  canvas.sync();
+  canvas.fit();
+}
+
+// ---- Tauri bridge --------------------------------------------------------
 
 async function getTauri() {
   if (tauri) return tauri;
@@ -55,320 +76,215 @@ async function getTauri() {
 
 async function wireBridge() {
   const t = await getTauri();
-  if (!t) { setConn("", "browser (sample only)"); setSource("sample", "flat"); disableLive(); return; }
+  if (!t) { setConn("", "browser (sample only)"); setSource("sample"); disableLive(); return; }
   setConn("live", "bridge ready");
-  await t.listen("orchestration-start", (e) => { beginOrch(e.payload); });
-  await t.listen("claude-event", (e) => { handleEvent(e.payload); });
-  await t.listen("claude-end", (e) => { model.endAgent(e.payload || {}); schedule(); });
-  await t.listen("orchestration-end", (e) => { finishOrch(e.payload || {}); });
-  await t.listen("merge-result", (e) => { model.applyMerge(e.payload); schedule(); });
-  await t.listen("claude-stderr", (e) => console.warn("[stderr]", e.payload?.agentId || "", e.payload?.line || e.payload));
+  await t.listen("claude-event", (e) => handleEvent(e.payload));
+  await t.listen("claude-end", (e) => endTurn(e.payload && e.payload.ok !== false));
+  await t.listen("claude-stderr", (e) => console.warn("[stderr]", e.payload));
 }
-
 function disableLive() {
-  const btn = document.querySelector('.srcsel button[data-src="live"]');
-  if (btn) { btn.disabled = true; btn.title = "Live bridge runs in the desktop app (npm run app)"; btn.style.opacity = .45; }
-  $("parallel").style.display = "none";
+  const btn = document.querySelector('.srcsel#srcsel button[data-src="live"]') || document.querySelector('#srcsel button[data-src="live"]');
+  if (btn) { btn.disabled = true; btn.title = "Live runs in the desktop app (npm run app)"; btn.style.opacity = .45; }
 }
 
-// ---- event handlers (shared by live listeners + sample replayer) --------
+// ---- the running turn ----------------------------------------------------
 
-function beginOrch(p) {
-  if (!p) return;
-  model.beginOrchestration(p);
-  // remember refs for merge / cleanup
-  live.sessionId = p.sessionId || live.sessionId;
-  live.baseBranch = p.baseBranch || "";
-  live.lanes = (p.lanes || []).map((l) => ({ agent_id: l.agentId, key: l.wt || l.agentId, branch: l.branch || "", wt_dir: l.wtDir || "" }));
-  $("stopall").style.display = (p.lanes && p.lanes.length && source === "live") ? "" : "none";
-  renderWts();
-  schedule();
-}
-function handleEvent(env) {
-  if (!env) return;
-  rawEvents.push(env);
-  model.apply(env.evt, env.agentId || "main");
-  schedule();
-}
-function finishOrch(p) {
-  model.finishOrchestration({ ok: p && p.ok !== false });
-  $("stopall").style.display = "none";
-  setConn(tauri && source === "live" ? "live" : "", source === "live" ? "session complete" : "sample · done");
-  schedule();
+function handleEvent(evt) {
+  if (!evt) return;
+  const s = chatById(runningId) || curChat();
+  if (!s) return;
+  if (evt.type === "system" && evt.session_id) s.claudeSessionId = evt.session_id; // for --resume
+  s.graph.apply(evt);
+  bump(s.graph);
 }
 
-// ---- one event in -> reduce -> schedule a render ------------------------
+function endTurn(ok) {
+  const s = chatById(runningId) || curChat();
+  if (s) { s.graph.endTurn(ok); bump(s.graph); }
+  runningId = null;
+  $("stopbtn").style.display = "none";
+  setConn(tauri ? "live" : "", tauri ? "ready" : "browser (sample only)");
+}
 
-function schedule() {
-  layout(model);
+function bump(graph) {
+  layout(graph);
+  if (canvas.model === graph) scheduleSync();
+  else renderSessions(); // a background chat advanced — refresh its sidebar dot
+}
+
+function scheduleSync() {
   if (syncQueued) return;
   syncQueued = true;
   const run = () => {
     if (!syncQueued) return;
     syncQueued = false;
     canvas.sync();
-    renderWts();
+    renderSessions();
     if (autoFit) canvas.fit();
   };
   requestAnimationFrame(run);
   setTimeout(run, 120);
 }
 
-// ---- prompt + sources ---------------------------------------------------
+// ---- prompting (append a turn) -------------------------------------------
 
-async function sendPrompt(text, steerNode) {
-  if (source === "sample") { replaySample(); return; }
+async function sendPrompt(text) {
+  if (source === "sample") { replaySampleTurn(); return; }
   text = (text || "").trim();
   if (!text) return;
+  if (runningId) { setConn("run", "still working — wait for this turn"); return; } // one turn at a time
+  if (!curChat()) newSession();
+  const s = curChat();
+
+  s.graph.beginTurn(text);
+  if (s.title === "New chat") { s.title = clip(text, 40); }
+  $("sesstitle").textContent = s.title;
+  if (view !== "agents") setView("agents");
+  if (canvas.model !== s.graph) canvas.setModel(s.graph);
+  autoFit = true;
+  scheduleSync();
 
   const t = await getTauri();
-  if (!t) { setConn("err", "no bridge — switch to sample"); return; }
-
-  if (parallel) return startParallel(text, t);
-
-  // flat single-session loop
-  resetSession();
-  $("sesstitle").textContent = clip(text, 40);
-  setConn("run", "running claude…");
+  if (!t) { setConn("err", "no bridge — switch to sample"); s.graph.endTurn(false); scheduleSync(); return; }
+  runningId = s.id;
+  $("stopbtn").style.display = "";
+  setConn("run", "working…");
   try {
-    await t.invoke("start_session", { prompt: text, steer: steerNode ? steerNode.title : null });
-  } catch (err) { setConn("err", String(err)); }
-}
-
-// auto-plan -> editable confirm -> start_orchestration
-async function startParallel(text, t) {
-  const cwd = $("repo").value.trim();
-  if (!cwd) { setConn("err", "set a git repo path for parallel mode"); $("repo").focus(); return; }
-  setConn("run", "planning lanes…");
-  let plan;
-  try { plan = await t.invoke("plan_lanes", { cwd, prompt: text }); }
-  catch (err) { setConn("err", String(err)); return; }
-  setConn("live", plan.is_git ? `${plan.lanes.length} lane(s) planned` : "not a git repo — single lane");
-  showLaneConfirm(plan, cwd, text, t);
-}
-
-function showLaneConfirm(plan, cwd, prompt, t) {
-  canvas.selected = null;
-  $("inspector").classList.add("open");
-  const lines = plan.lanes.map((l) => `${l.key} | ${l.title} | ${l.prompt}`).join("\n");
-  $("inwrap").innerHTML = `
-    <div class="crumb">parallel orchestration</div>
-    <div class="inh">Review lanes</div>
-    <div class="lead">Each lane runs as its own claude in its own git worktree off the current HEAD, then you merge back. Edit below — one lane per line as <code>key | title | prompt</code>.</div>
-    <div class="blk lanesform">
-      <textarea id="laneedit">${lines.replace(/</g, "&lt;")}</textarea>
-      <div class="acts">
-        <button class="btn" id="lanecancel">cancel</button>
-        <button class="btn primary" id="lanerun">run lanes ↗</button>
-      </div>
-    </div>`;
-  $("lanecancel").onclick = () => { $("inspector").classList.remove("open"); setConn("live", "bridge ready"); };
-  $("lanerun").onclick = async () => {
-    const lanes = parseLanes($("laneedit").value, prompt);
-    if (!lanes.length) return;
-    $("inspector").classList.remove("open");
-    resetSession();
-    $("sesstitle").textContent = `parallel · ${clip(prompt, 30)}`;
-    live.cwd = cwd;
-    const sessionId = "orch-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
-    setConn("run", `orchestrating ${lanes.length} lanes…`);
-    try {
-      await t.invoke("start_orchestration", { sessionId, cwd, lanes, opts: { budget_usd: null, yolo: false } });
-    } catch (err) { setConn("err", String(err)); }
-  };
-}
-
-function parseLanes(text, fallbackPrompt) {
-  const lanes = [];
-  for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    if (!line) continue;
-    const parts = line.split("|").map((s) => s.trim());
-    const key = (parts[0] || "lane").toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "") || "lane";
-    const title = parts[1] || key;
-    const prompt = parts.slice(2).join(" | ") || parts[1] || fallbackPrompt;
-    lanes.push({ key, title, prompt });
+    await t.invoke("start_session", { sessionId: s.id, prompt: text, resume: s.claudeSessionId });
+  } catch (err) {
+    setConn("err", String(err));
+    s.graph.endTurn(false); runningId = null; $("stopbtn").style.display = "none"; scheduleSync();
   }
-  return lanes.slice(0, 4);
 }
 
-function resetSession() {
-  model.reset(); rawEvents = []; mergePreviewed = false; sampleMerge = null; codeLoaded = false;
-  live = { sessionId: null, cwd: $("repo").value.trim() || null, baseBranch: null, lanes: [] };
-  autoFit = true; canvas.deselect(); canvas.sync();
+async function stopTurn() {
+  const t = await getTauri();
+  if (t && runningId) { try { await t.invoke("stop_session", { sessionId: runningId }); } catch {} }
 }
 
-// ---- merge + stop + open-worktree ---------------------------------------
+// ---- sample replay (each replay appends a turn) --------------------------
 
-async function onMerge(resultNode) {
-  if (source === "sample") {
-    if (sampleMerge) { model.applyMerge(sampleMerge); schedule(); }
-    return;
-  }
-  const t = await getTauri(); if (!t) return;
-  const apply = mergePreviewed;
-  setConn("run", apply ? "merging…" : "merge preview…");
+let _sample = null;
+async function loadSample() {
+  if (_sample) return _sample;
   try {
-    await t.invoke("merge_lanes", { cwd: live.cwd, baseBranch: live.baseBranch, lanes: live.lanes, apply });
-    mergePreviewed = !apply ? true : false;
-    setConn("live", apply ? "merged" : "preview — click merge again to apply");
-    if (apply) { try { await t.invoke("cleanup_session", { cwd: live.cwd, sessionId: live.sessionId, lanes: live.lanes }); } catch {} }
-  } catch (err) { setConn("err", String(err)); }
+    const txt = await (await fetch("/samples/sample-session.jsonl")).text();
+    _sample = txt.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => JSON.parse(l));
+  } catch { _sample = []; }
+  return _sample;
 }
-
-async function onOpenWorktree(node) {
-  // only real git-worktree lanes have a directory to open (not the flat "main"
-  // lane, not a non-git session)
-  if (source !== "live" || !node || node.wt === "main" || !live.cwd) return;
-  const lane = live.lanes.find((l) => l.key === node.wt);
-  if (!lane || !lane.wt_dir) return;
-  const t = await getTauri(); if (!t) return;
-  try { await t.invoke("open_worktree", { cwd: live.cwd, sessionId: live.sessionId, key: node.wt }); } catch (err) { console.warn(err); }
-}
-
-async function stopAll() {
-  const t = await getTauri(); if (!t || !live.sessionId) return;
-  try { await t.invoke("stop_all", { sessionId: live.sessionId }); setConn("live", "stopped"); } catch (err) { console.warn(err); }
-}
-
-// ---- sample replay (flat bare events OR parallel envelope fixture) -------
-
-async function replaySample() {
-  const file = fixture === "parallel" ? "sample-orchestration.jsonl" : "sample-session.jsonl";
-  const lines = await loadSample(file);
-  if (!lines.length) return;
-  resetSession();
-  $("sesstitle").textContent = fixture === "parallel" ? "Sample · parallel auth" : "Sample · auth refactor";
-  setConn("run", "replaying sample…");
+async function replaySampleTurn() {
+  const events = await loadSample();
+  if (!events.length) return;
+  if (!curChat()) newSession();
+  const s = curChat();
+  if (canvas.model !== s.graph) canvas.setModel(s.graph);
+  if (view !== "agents") setView("agents");
+  s.graph.beginTurn("Refactor auth and add tests across the 3 packages");
+  if (s.title === "New chat") { s.title = "Auth refactor"; $("sesstitle").textContent = s.title; }
+  autoFit = true;
+  setConn("", "replaying…");
   let i = 0;
   const step = () => {
-    if (i >= lines.length) { setConn("", "sample · done"); return; }
-    const line = lines[i++];
-    dispatchSample(line);
-    const gap = (line.kind === "orchestration-end" || line.evt?.type === "result" || line.type === "result") ? 80 : 320;
-    setTimeout(step, gap);
+    if (i >= events.length) { s.graph.endTurn(true); bump(s.graph); setConn("", "sample"); return; }
+    s.graph.apply(events[i++]);
+    bump(s.graph);
+    const e = events[i - 1];
+    setTimeout(step, e.type === "result" ? 60 : e.type === "user" ? 220 : 380);
   };
   step();
 }
 
-function dispatchSample(line) {
-  if (line.kind === "orchestration-start") beginOrch(line);
-  else if (line.kind === "event") handleEvent(line);
-  else if (line.kind === "end") { model.endAgent(line); schedule(); }
-  else if (line.kind === "orchestration-end") finishOrch(line);
-  else if (line.kind === "merge-result") { sampleMerge = line; } // fired on merge click
-  else { model.apply(line, "main"); schedule(); }              // bare legacy event
-}
+// ---- Code Graph view -----------------------------------------------------
 
-const _sampleCache = {};
-async function loadSample(file) {
-  if (_sampleCache[file]) return _sampleCache[file];
-  try {
-    const r = await fetch("/samples/" + file);
-    const text = await r.text();
-    _sampleCache[file] = text.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => JSON.parse(l));
-  } catch (err) { console.error("sample load failed", err); _sampleCache[file] = []; }
-  return _sampleCache[file];
-}
-
-// ---- Code Graph view (M3) -----------------------------------------------
-
-async function switchView(v) {
-  const requested = v;        // guard against an out-of-order async swap
+function setView(v) {
   view = v;
   document.querySelectorAll("#viewsel button").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
+}
+async function switchView(v) {
+  const requested = v;
+  setView(v);
   if (v === "code") {
     await loadCodeGraph();
-    if (view !== requested) return; // a newer switch superseded this one
+    if (view !== requested) return;
     codeModel.setTouched(touchedFiles());
     canvas.setModel(codeModel);
   } else {
-    canvas.setModel(model);
+    canvas.setModel(curChat() ? curChat().graph : new GraphModel());
   }
   canvas.selWt = null;
   canvas.deselect();
   canvas.sync();
   canvas.fit();
 }
-
 async function loadCodeGraph() {
-  if (codeLoaded) return; // cached scan; setTouched re-runs each entry (cheap)
+  if (codeLoaded) return;
   let graph = null;
   const t = await getTauri();
-  const cwd = live.cwd || $("repo").value.trim();
-  if (t && cwd) {
+  if (t) {
     setConn("run", "scanning repo…");
-    try { graph = await t.invoke("scan_code_graph", { cwd }); setConn("live", `scanned ${cwd}`); }
+    try { graph = await t.invoke("scan_code_graph", { cwd: codeScanDir() }); setConn("live", "scanned repo"); }
     catch (err) { setConn("err", String(err)); }
   }
   if (!graph) graph = await loadJSON("/samples/sample-codegraph.json");
   codeModel.load(graph || { nodes: [], edges: [] });
   codeLoaded = true;
 }
-
-// files the current agent session has touched (for the cross-link highlight) —
-// only file-bearing tools (Read/Edit/Write), using the FULL path so the suffix
-// match disambiguates same-named files; bash/grep targets are not paths.
+function codeScanDir() {
+  // scan the dir the live session ran in (its system event carried cwd), else home is fine
+  const s = curChat();
+  return (s && s.graph.meta && s.graph.meta.cwd) || ".";
+}
 function touchedFiles() {
-  const s = new Set();
-  for (const n of model.nodes) {
+  const s = curChat();
+  const out = new Set();
+  if (!s) return out;
+  for (const n of s.graph.nodes) {
     if (n.type !== "tool" || !(n.kind === "read" || n.kind === "edit" || n.kind === "write")) continue;
     const full = n.detail && n.detail.input && (n.detail.input.file_path || n.detail.input.notebook_path);
     const p = full || n.file;
-    if (p) s.add(p);
+    if (p) out.add(p);
   }
-  return s;
+  return out;
 }
-
 async function loadJSON(url) {
-  try { return await (await fetch(url)).json(); } catch (err) { console.error("load failed", url, err); return null; }
+  try { return await (await fetch(url)).json(); } catch { return null; }
 }
 
-function setSource(s, fx) {
+function setSource(s) {
   source = s;
-  if (fx) fixture = fx;
-  document.querySelectorAll("#srcsel button").forEach((b) =>
-    b.classList.toggle("active", b.dataset.src === s && (s !== "sample" || b.dataset.fixture === fixture)));
-  $("repo").style.display = (s === "live" && parallel) ? "" : "none";
+  document.querySelectorAll("#srcsel button").forEach((b) => b.classList.toggle("active", b.dataset.src === s));
 }
 
-// ---- sidebar ------------------------------------------------------------
-
-function renderWts() {
-  const h = $("wtlist");
-  h.innerHTML = "";
-  const keys = Object.keys(model.wtMap);
-  if (!model.nodes.length) { h.innerHTML = `<div class="empty-side">No active worktrees yet.</div>`; return; }
-  const statusByWt = {};
-  for (const n of model.nodes) if (n.type === "agent") statusByWt[n.wt] = n.status;
-  for (const key of keys) {
-    const w = model.wtMap[key];
-    const st = statusByWt[key];
-    const git = key === "main" ? "base" : st === "run" ? "running" : st === "done" ? "ready" : "queued";
-    const d = document.createElement("div");
-    d.className = "wtrow" + (canvas.selWt === key ? " sel" : "");
-    d.innerHTML = `<span class="sw" style="background:${w.color}"></span><div><div class="nm">${w.name}</div><div class="git">${git}</div></div>`;
-    d.onclick = () => { if (view !== "agents") return; canvas.setWtFilter(key); renderWts(); };
-    h.appendChild(d);
-  }
-}
+// ---- sidebar (chats) -----------------------------------------------------
 
 function renderSessions() {
-  $("sesslist").innerHTML =
-    `<div class="sessrow active"><span class="aw-ic">${I.branch}</span><span class="t">current</span><span class="dot" style="background:var(--color-text-info)"></span></div>`;
+  const h = $("sesslist");
+  h.innerHTML = "";
+  if (!sessions.length) { h.innerHTML = `<div class="empty-side">No chats yet — type below to start.</div>`; return; }
+  sessions.forEach((s, i) => {
+    const running = s.id === runningId;
+    const dot = running ? "var(--color-text-info)" : s.graph.turnCount ? "var(--color-text-success)" : "var(--color-border-secondary)";
+    const d = document.createElement("div");
+    d.className = "sessrow" + (i === cur ? " active" : "");
+    d.innerHTML = `<span class="aw-ic">${I.branch}</span><span class="t">${escapeHtml(s.title)}</span><span class="dot" style="background:${dot}"></span>`;
+    d.onclick = () => switchSession(i);
+    h.appendChild(d);
+  });
 }
+const escapeHtml = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
 function setConn(cls, label) {
   const el = $("conn");
   el.className = "conn" + (cls ? " " + cls : "");
   el.textContent = label;
 }
-function clip(s, n) { s = String(s || ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+function clip(s, n) { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
 // ---- toolbar / prompt events --------------------------------------------
 
 document.querySelectorAll("#srcsel button").forEach((b) =>
-  b.onclick = () => { if (!b.disabled) setSource(b.dataset.src, b.dataset.fixture || fixture); });
+  b.onclick = () => { if (!b.disabled) setSource(b.dataset.src); });
 document.querySelectorAll("#viewsel button").forEach((b) =>
   b.onclick = () => switchView(b.dataset.view));
 $("send").onclick = () => fireSend();
@@ -379,29 +295,15 @@ function fireSend() {
   i.value = "";
   sendPrompt(v);
 }
-$("parallel").onclick = () => {
-  parallel = !parallel;
-  $("parallel").classList.toggle("active", parallel);
-  $("parallel").textContent = parallel ? "⚡ parallel" : "single";
-  $("repo").style.display = (source === "live" && parallel) ? "" : "none";
-};
-$("stopall").onclick = stopAll;
-$("newsession").onclick = () => { resetSession(); renderWts(); $("sesstitle").textContent = "No session"; setConn(tauri ? "live" : "", tauri ? "bridge ready" : "browser (sample only)"); };
+$("newsession").onclick = () => newSession();
+$("stopbtn").onclick = stopTurn;
 $("zin").onclick = () => { autoFit = false; canvas.zoom(1.15); };
 $("zout").onclick = () => { autoFit = false; canvas.zoom(1 / 1.15); };
 $("fit").onclick = () => canvas.fit();
-$("replay").onclick = () => {
-  if (source === "sample") return replaySample();
-  if (rawEvents.length) {
-    const evs = rawEvents.slice();
-    model.reset(); rawEvents = []; canvas.sync();
-    let i = 0; const step = () => { if (i >= evs.length) return; handleEvent(evs[i++]); setTimeout(step, 300); }; step();
-  } else replaySample();
-};
+$("replay").onclick = () => { if (source === "sample") replaySampleTurn(); else replaySampleTurn(); };
 $("viewport").addEventListener("mousedown", () => { autoFit = false; });
 
 // ---- boot ---------------------------------------------------------------
 
-renderSessions();
-renderWts();
+newSession();          // start with one empty chat
 wireBridge();
