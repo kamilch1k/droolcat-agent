@@ -91,6 +91,11 @@ fn turn_log_path(session_id: &str) -> PathBuf {
 
 /// Spawn one turn of a Claude Code conversation and stream its events.
 fn run_claude(app: AppHandle, session_id: String, prompt: String, cwd: String, resume: Option<String>, edits: bool) -> Result<(), String> {
+    // make sure the working folder exists — otherwise current_dir() makes spawn
+    // fail outright (which surfaced as an opaque "session ended")
+    if !cwd.trim().is_empty() && !Path::new(&cwd).is_dir() {
+        std::fs::create_dir_all(&cwd).map_err(|e| format!("can't use folder '{cwd}': {e}"))?;
+    }
     let bin = find_claude();
     let (program, pre) = shell_wrap(&bin);
     let mut cmd = Command::new(&program);

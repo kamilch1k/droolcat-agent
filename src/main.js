@@ -38,6 +38,7 @@ let tauri = null;
 let autoFit = true;       // follow the conversation until the user pans/zooms
 let fitPending = false;   // do a full fit on the next sync (turn start / switch)
 let syncQueued = false;
+let lastErr = "";         // last stderr line — shown if a turn ends with no result
 
 const newId = () => "chat-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
 const curChat = () => (cur >= 0 ? sessions[cur] : null);
@@ -83,7 +84,7 @@ async function wireBridge() {
   setConn("live", "bridge ready");
   await t.listen("claude-event", (e) => handleEvent(e.payload));
   await t.listen("claude-end", (e) => endTurn(e.payload && e.payload.ok !== false));
-  await t.listen("claude-stderr", (e) => console.warn("[stderr]", e.payload));
+  await t.listen("claude-stderr", (e) => { const l = String(e.payload || "").trim(); if (l) lastErr = l; console.warn("[stderr]", l); });
 }
 function disableLive() {
   const btn = document.querySelector('.srcsel#srcsel button[data-src="live"]') || document.querySelector('#srcsel button[data-src="live"]');
@@ -103,7 +104,13 @@ function handleEvent(evt) {
 
 function endTurn(ok) {
   const s = chatById(runningId) || curChat();
-  if (s) { s.graph.endTurn(ok); bump(s.graph); }
+  if (s) {
+    s.graph.endTurn(ok, ok ? "" : lastErr);
+    // if a resumed turn failed, drop the stale session id so the next prompt
+    // starts a fresh Claude session instead of failing again
+    if (!ok && /resume|conversation|no session|session id/i.test(lastErr)) s.claudeSessionId = null;
+    bump(s.graph);
+  }
   runningId = null;
   $("stopbtn").style.display = "none";
   setConn(tauri ? "live" : "", tauri ? "ready" : "browser (sample only)");
@@ -156,13 +163,15 @@ async function sendPrompt(text) {
   const t = await getTauri();
   if (!t) { setConn("err", "no bridge — switch to sample"); s.graph.endTurn(false); scheduleSync(); return; }
   runningId = s.id;
+  lastErr = "";
   $("stopbtn").style.display = "";
   setConn("run", "working…");
   try {
     await t.invoke("start_session", { sessionId: s.id, prompt: text, resume: s.claudeSessionId, cwd: s.cwd || null, edits: !!s.edits });
   } catch (err) {
     setConn("err", String(err));
-    s.graph.endTurn(false); runningId = null; $("stopbtn").style.display = "none"; scheduleSync();
+    s.graph.endTurn(false, "Couldn't start the turn — " + String(err));
+    runningId = null; $("stopbtn").style.display = "none"; bump(s.graph);
   }
 }
 

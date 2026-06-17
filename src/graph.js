@@ -297,10 +297,11 @@ export class GraphModel {
 
   // stream ended (claude-end) — if no result event arrived, synthesize one so
   // the turn closes and the next prompt has something to chain from
-  endTurn(ok) {
+  endTurn(ok, reason) {
     const t = this.turn;
     if (t && !t.resultId) {
-      this._result({ result: ok ? "Done." : "The session ended.", is_error: !ok });
+      const msg = ok ? "Done." : (reason && String(reason).trim() ? String(reason).trim() : "The turn ended without a response.");
+      this._result({ result: msg, is_error: !ok });
     }
     this.running = false;
   }
