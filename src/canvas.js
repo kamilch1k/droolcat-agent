@@ -101,6 +101,7 @@ export class Canvas {
       el.classList.add("show");
       el.classList.toggle("running", n.status === "run");
       el.classList.toggle("sel", n.id === this.selected);
+      el.classList.toggle("touched", !!n.touched);
       el.classList.toggle("dim", !!(this.selWt && n.wt && n.wt !== this.selWt));
       this._pill(el, n);
       maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h);
@@ -121,7 +122,10 @@ export class Canvas {
     // header pill
     const s = m.stats();
     if (this.headpill) {
-      if (s.running > 0) {
+      if (m.headline) {
+        this.headpill.className = "aw-pill";
+        this.headpill.textContent = m.headline;
+      } else if (s.running > 0) {
         this.headpill.className = "aw-pill p-info";
         this.headpill.textContent = `${s.running} of ${s.agents} agents running`;
       } else if (s.done) {
@@ -169,6 +173,10 @@ export class Canvas {
     if (n.type === "synth")
       return `<div class="row"><span class="aw-ic">${I.synth}</span><span class="lbl">${esc(n.title)}</span>${pill}</div>
         <div class="think one">${esc(n.thought || "")}</div>`;
+    if (n.type === "file")
+      return `<div class="row"><span class="sw" style="width:8px;height:8px;border-radius:2px;background:${this._wtColor(n.wt)};display:inline-block;flex:none"></span><span class="lbl">${esc(n.title)}</span><span class="langbadge">${esc(n.lang || "")}</span></div>
+        <div class="file" style="margin-top:4px">${esc(n.dir || ".")}</div>
+        <div class="fmeta">${n.importedBy || 0} in · ${n.imports || 0} out</div>`;
     if (n.type === "result")
       return `<div class="rh"><span class="aw-ic" style="color:var(--color-text-success)">${I.check}</span>
         <span class="lbl">${esc(n.title)}</span><span class="meta">result</span></div>
@@ -179,6 +187,16 @@ export class Canvas {
   }
 
   _path(a, b) {
+    if (this.model && this.model.edgeStyle === "graph") {
+      // center-to-center S-curve (dependency graph, not a top-down tree)
+      const ax = a.x + a.w / 2, ay = a.y + a.h / 2, bx = b.x + b.w / 2, by = b.y + b.h / 2;
+      if (Math.abs(bx - ax) >= Math.abs(by - ay)) {
+        const mx = (ax + bx) / 2;
+        return `M${ax},${ay} C${mx},${ay} ${mx},${by} ${bx},${by}`;
+      }
+      const my = (ay + by) / 2;
+      return `M${ax},${ay} C${ax},${my} ${bx},${my} ${bx},${by}`;
+    }
     const x1 = a.x + a.w / 2, y1 = a.y + a.h, x2 = b.x + b.w / 2, y2 = b.y, my = (y1 + y2) / 2;
     return `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
   }

@@ -14,6 +14,7 @@
 //!   orchestration-end   { sessionId, ok }
 //!   merge-result        MergeReport
 
+mod codegraph;
 mod worktree;
 
 use std::collections::HashMap;
@@ -595,6 +596,15 @@ fn open_worktree(cwd: String, session_id: String, key: String) -> Result<String,
     Ok(wt_dir)
 }
 
+/// Milestone 3: scan a repo into a file/import dependency graph (Code Graph).
+#[tauri::command]
+fn scan_code_graph(cwd: String) -> Result<codegraph::CodeGraph, String> {
+    if cwd.trim().is_empty() {
+        return Err("no path".into());
+    }
+    Ok(codegraph::scan(&cwd))
+}
+
 #[tauri::command]
 fn claude_path() -> String {
     find_claude()
@@ -612,6 +622,7 @@ pub fn run() {
             cleanup_session,
             stop_all,
             open_worktree,
+            scan_code_graph,
             claude_path
         ])
         .run(tauri::generate_context!())

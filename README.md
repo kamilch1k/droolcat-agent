@@ -86,9 +86,11 @@ Captured live transcripts are teed to `sessions/*.jsonl` (gitignored).
 ## Milestones
 
 - [x] **1 · Prove the loop (flat).** Bridge → parser → Agent Graph for a single
-      real `claude -p` session, live. *(This repo.)*
-- [ ] **2 · Parallelism + worktrees.** One driven subprocess per branch in its
-      own git worktree; deep per-agent detail; merge-back.
+      real `claude -p` session, live.
+- [x] **2 · Parallelism + worktrees.** One driven `claude -p` subprocess per
+      lane in its own git worktree off a frozen base; deep per-agent detail;
+      human-gated sequential merge-back with conflict detection. The flat loop
+      is the N=1 case. (`milestone-2`)
 - [ ] **3 · Code Graph.** Static analysis → structural graph; highlight
       agent-touched nodes; cross-link to the Agent Graph.
 - [ ] **4 · Window Graph.** Workspace map tying editors, diffs, terminals, and

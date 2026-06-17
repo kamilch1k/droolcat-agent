@@ -112,6 +112,10 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .k-search .kic,.k-search .lbl{color:var(--color-text-secondary)}
 .k-web .kic,.k-web .lbl{color:var(--wt-tests)}
 .t-synth{border-style:dashed;background:var(--color-background-secondary)}
+.t-file .lbl{font-size:12.5px;font-family:var(--font-mono)}
+.langbadge{font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--color-text-tertiary);margin-left:auto;border:0.5px solid var(--color-border-secondary);border-radius:4px;padding:1px 5px}
+.fmeta{font-family:var(--font-mono);font-size:10px;color:var(--color-text-tertiary);margin-top:6px}
+.cnode.touched{border-color:var(--color-text-info);box-shadow:0 0 0 1px var(--color-text-info),0 0 16px rgba(28,95,199,.28)}
 .t-result{background:var(--color-background-secondary);border-radius:var(--radius-lg);box-shadow:0 2px 10px rgba(0,0,0,.04)}
 .rh{display:flex;align-items:center;gap:8px;margin-bottom:9px}.rh .meta{margin-left:auto}
 .summary{font-size:12.5px;line-height:1.6;color:var(--color-text-secondary);white-space:pre-wrap}

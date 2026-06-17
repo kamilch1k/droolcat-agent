@@ -4,6 +4,7 @@
 import "./styles.css";
 import { I } from "./icons.js";
 import { GraphModel, layout } from "./graph.js";
+import { CodeGraphModel } from "./codegraph.js";
 import { Canvas } from "./canvas.js";
 
 const $ = (id) => document.getElementById(id);
@@ -24,6 +25,9 @@ const canvas = new Canvas(
 );
 canvas.setModel(model);
 
+const codeModel = new CodeGraphModel();
+let view = "agents";          // 'agents' | 'code'
+let codeLoaded = false;
 let source = "live";          // 'live' | 'sample'
 let fixture = "flat";          // 'flat' | 'parallel' (sample mode)
 let parallel = false;          // live parallel-orchestration mode
@@ -189,7 +193,7 @@ function parseLanes(text, fallbackPrompt) {
 }
 
 function resetSession() {
-  model.reset(); rawEvents = []; mergePreviewed = false; sampleMerge = null;
+  model.reset(); rawEvents = []; mergePreviewed = false; sampleMerge = null; codeLoaded = false;
   live = { sessionId: null, cwd: $("repo").value.trim() || null, baseBranch: null, lanes: [] };
   autoFit = true; canvas.deselect(); canvas.sync();
 }
@@ -267,10 +271,63 @@ async function loadSample(file) {
   return _sampleCache[file];
 }
 
+// ---- Code Graph view (M3) -----------------------------------------------
+
+async function switchView(v) {
+  const requested = v;        // guard against an out-of-order async swap
+  view = v;
+  document.querySelectorAll("#viewsel button").forEach((b) => b.classList.toggle("active", b.dataset.view === v));
+  if (v === "code") {
+    await loadCodeGraph();
+    if (view !== requested) return; // a newer switch superseded this one
+    codeModel.setTouched(touchedFiles());
+    canvas.setModel(codeModel);
+  } else {
+    canvas.setModel(model);
+  }
+  canvas.selWt = null;
+  canvas.deselect();
+  canvas.sync();
+  canvas.fit();
+}
+
+async function loadCodeGraph() {
+  if (codeLoaded) return; // cached scan; setTouched re-runs each entry (cheap)
+  let graph = null;
+  const t = await getTauri();
+  const cwd = live.cwd || $("repo").value.trim();
+  if (t && cwd) {
+    setConn("run", "scanning repo…");
+    try { graph = await t.invoke("scan_code_graph", { cwd }); setConn("live", `scanned ${cwd}`); }
+    catch (err) { setConn("err", String(err)); }
+  }
+  if (!graph) graph = await loadJSON("/samples/sample-codegraph.json");
+  codeModel.load(graph || { nodes: [], edges: [] });
+  codeLoaded = true;
+}
+
+// files the current agent session has touched (for the cross-link highlight) —
+// only file-bearing tools (Read/Edit/Write), using the FULL path so the suffix
+// match disambiguates same-named files; bash/grep targets are not paths.
+function touchedFiles() {
+  const s = new Set();
+  for (const n of model.nodes) {
+    if (n.type !== "tool" || !(n.kind === "read" || n.kind === "edit" || n.kind === "write")) continue;
+    const full = n.detail && n.detail.input && (n.detail.input.file_path || n.detail.input.notebook_path);
+    const p = full || n.file;
+    if (p) s.add(p);
+  }
+  return s;
+}
+
+async function loadJSON(url) {
+  try { return await (await fetch(url)).json(); } catch (err) { console.error("load failed", url, err); return null; }
+}
+
 function setSource(s, fx) {
   source = s;
   if (fx) fixture = fx;
-  document.querySelectorAll(".srcsel button").forEach((b) =>
+  document.querySelectorAll("#srcsel button").forEach((b) =>
     b.classList.toggle("active", b.dataset.src === s && (s !== "sample" || b.dataset.fixture === fixture)));
   $("repo").style.display = (s === "live" && parallel) ? "" : "none";
 }
@@ -291,7 +348,7 @@ function renderWts() {
     const d = document.createElement("div");
     d.className = "wtrow" + (canvas.selWt === key ? " sel" : "");
     d.innerHTML = `<span class="sw" style="background:${w.color}"></span><div><div class="nm">${w.name}</div><div class="git">${git}</div></div>`;
-    d.onclick = () => { canvas.setWtFilter(key); renderWts(); };
+    d.onclick = () => { if (view !== "agents") return; canvas.setWtFilter(key); renderWts(); };
     h.appendChild(d);
   }
 }
@@ -310,8 +367,10 @@ function clip(s, n) { s = String(s || ""); return s.length > n ? s.slice(0, n - 
 
 // ---- toolbar / prompt events --------------------------------------------
 
-document.querySelectorAll(".srcsel button").forEach((b) =>
+document.querySelectorAll("#srcsel button").forEach((b) =>
   b.onclick = () => { if (!b.disabled) setSource(b.dataset.src, b.dataset.fixture || fixture); });
+document.querySelectorAll("#viewsel button").forEach((b) =>
+  b.onclick = () => switchView(b.dataset.view));
 $("send").onclick = () => fireSend();
 $("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter") fireSend(); });
 function fireSend() {

@@ -1,0 +1,29 @@
+{
+  "root": "/sample/acme-app",
+  "truncated": false,
+  "fileCount": 10,
+  "nodes": [
+    { "id": "src/index.tsx", "path": "src/index.tsx", "dir": "src", "lang": "ts", "imports": 1, "importedBy": 0 },
+    { "id": "src/App.tsx", "path": "src/App.tsx", "dir": "src", "lang": "ts", "imports": 3, "importedBy": 1 },
+    { "id": "src/components/Login.tsx", "path": "src/components/Login.tsx", "dir": "src/components", "lang": "ts", "imports": 1, "importedBy": 1 },
+    { "id": "src/components/Header.tsx", "path": "src/components/Header.tsx", "dir": "src/components", "lang": "ts", "imports": 0, "importedBy": 1 },
+    { "id": "src/hooks/useAuth.ts", "path": "src/hooks/useAuth.ts", "dir": "src/hooks", "lang": "ts", "imports": 2, "importedBy": 3 },
+    { "id": "src/hooks/useAuth.test.ts", "path": "src/hooks/useAuth.test.ts", "dir": "src/hooks", "lang": "ts", "imports": 1, "importedBy": 0 },
+    { "id": "src/auth/service.ts", "path": "src/auth/service.ts", "dir": "src/auth", "lang": "ts", "imports": 1, "importedBy": 2 },
+    { "id": "src/auth/session.ts", "path": "src/auth/session.ts", "dir": "src/auth", "lang": "ts", "imports": 0, "importedBy": 1 },
+    { "id": "src/auth/service.test.ts", "path": "src/auth/service.test.ts", "dir": "src/auth", "lang": "ts", "imports": 1, "importedBy": 0 },
+    { "id": "src/api/client.ts", "path": "src/api/client.ts", "dir": "src/api", "lang": "ts", "imports": 0, "importedBy": 1 }
+  ],
+  "edges": [
+    { "from": "src/index.tsx", "to": "src/App.tsx" },
+    { "from": "src/App.tsx", "to": "src/components/Login.tsx" },
+    { "from": "src/App.tsx", "to": "src/components/Header.tsx" },
+    { "from": "src/App.tsx", "to": "src/hooks/useAuth.ts" },
+    { "from": "src/components/Login.tsx", "to": "src/hooks/useAuth.ts" },
+    { "from": "src/hooks/useAuth.ts", "to": "src/auth/service.ts" },
+    { "from": "src/hooks/useAuth.ts", "to": "src/api/client.ts" },
+    { "from": "src/auth/service.ts", "to": "src/auth/session.ts" },
+    { "from": "src/auth/service.test.ts", "to": "src/auth/service.ts" },
+    { "from": "src/hooks/useAuth.test.ts", "to": "src/hooks/useAuth.ts" }
+  ]
+}
