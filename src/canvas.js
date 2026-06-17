@@ -3,6 +3,7 @@
 // reconciles DOM, animates status, and owns the camera + inspector.
 
 import { I, KIC } from "./icons.js";
+import { SIZES, layout } from "./graph.js";
 
 const WT_FALLBACK = {
   main: { name: "main", color: "var(--wt-main)" },
@@ -75,6 +76,20 @@ export class Canvas {
         this.edgesSvg.appendChild(p);
         this.edgeEls[key] = p;
       }
+    }
+
+    // measure each card's ACTUAL rendered height and re-lay-out from it, so
+    // tight content doesn't leave a gap (line starting in empty space) and long
+    // content doesn't overlap. Only for the agent graph (cards vary by text).
+    if (typeof m.beginTurn === "function") {
+      for (const n of m.nodes) {
+        const el = this.els[n.id]; if (el) el.style.width = ((SIZES[n.type] || SIZES.tool).w) + "px";
+      }
+      void this.world.offsetHeight;
+      for (const n of m.nodes) {
+        const el = this.els[n.id]; if (el) n.h = el.offsetHeight;
+      }
+      layout(m);
     }
 
     if (this.empty) this.empty.classList.toggle("hide", m.nodes.length > 0);

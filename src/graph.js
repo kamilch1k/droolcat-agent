@@ -377,7 +377,7 @@ export function layout(model) {
   let maxDepth = 0;
   const rowH = {};
   nodes.forEach((n) => {
-    const h = (SIZES[n.type] || SIZES.tool).h;
+    const h = (typeof n.h === "number" && n.h) ? n.h : (SIZES[n.type] || SIZES.tool).h;
     const d = depth[n.id];
     rowH[d] = Math.max(rowH[d] || 0, h);
     maxDepth = Math.max(maxDepth, d);
@@ -389,7 +389,8 @@ export function layout(model) {
   let minX = Infinity, maxX = -Infinity, maxY = 0;
   nodes.forEach((n) => {
     const sz = SIZES[n.type] || SIZES.tool;
-    n.w = sz.w; n.h = sz.h;
+    n.w = sz.w;
+    if (!(typeof n.h === "number" && n.h)) n.h = sz.h; // keep measured height if set
     n.x = (x[n.id] || 0) + COL / 2 - n.w / 2;
     n.y = yOf[depth[n.id]] || 0;
     minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h);

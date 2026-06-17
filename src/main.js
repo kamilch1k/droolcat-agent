@@ -117,9 +117,8 @@ function endTurn(ok) {
 }
 
 function bump(graph) {
-  layout(graph);
-  if (canvas.model === graph) scheduleSync();
-  else renderSessions(); // a background chat advanced — refresh its sidebar dot
+  if (canvas.model === graph) scheduleSync();   // canvas measures heights + lays out + renders
+  else { layout(graph); renderSessions(); }     // off-screen chat: rough pre-layout + sidebar dot
 }
 
 function scheduleSync() {
@@ -128,10 +127,7 @@ function scheduleSync() {
   const run = () => {
     if (!syncQueued) return;
     syncQueued = false;
-    // ALWAYS lay out before rendering — otherwise a freshly-created node has no
-    // x/y/w yet and renders broken at the corner (left:undefinedpx)
-    if (canvas.model && typeof canvas.model.beginTurn === "function") layout(canvas.model);
-    canvas.sync();
+    canvas.sync(); // canvas.sync() measures card heights + lays out the agent graph itself
     renderSessions();
     if (autoFit) {
       if (fitPending) { fitPending = false; canvas.fit(); }
