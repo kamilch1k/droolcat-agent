@@ -3,6 +3,8 @@
 // Multiple CHATS in the sidebar; each chat is one continuous Claude Code
 // conversation rendered as a growing graph. Prompting APPENDS a turn (never
 // resets) and resumes the chat's Claude session so context carries over.
+import "@fontsource-variable/inter";
+import "@fontsource-variable/jetbrains-mono";
 import "./styles.css";
 import { I } from "./icons.js";
 import { GraphModel, layout } from "./graph.js";
