@@ -55,6 +55,10 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 .srcsel button.active{background:var(--color-background-secondary);color:var(--color-text-primary);font-weight:500}
 .replay{background:var(--color-background-secondary);border:0.5px solid var(--color-border-secondary);border-radius:var(--radius);padding:6px 11px;font-size:12.5px;display:flex;align-items:center;gap:6px}
 .replay:hover{background:var(--color-background-tertiary)}
+.replay.active{background:var(--color-text-primary);color:#fff;border-color:var(--color-text-primary)}
+.pinput.repo{flex:0 0 220px;font-family:var(--font-mono);font-size:12px}
+.lanesform{display:flex;flex-direction:column;gap:8px}
+.lanesform textarea{width:100%;border:0.5px solid var(--color-border-secondary);border-radius:var(--radius);font-family:var(--font-mono);font-size:12px;padding:9px;resize:vertical;min-height:120px}
 .zc{display:flex;align-items:center;border:0.5px solid var(--color-border-secondary);border-radius:var(--radius);overflow:hidden}
 .zc button{background:var(--color-background-primary);border:none;padding:6px 10px;font-size:13px}
 .zc button+button{border-left:0.5px solid var(--color-border-secondary)}

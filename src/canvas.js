@@ -4,18 +4,16 @@
 
 import { I, KIC } from "./icons.js";
 
-const WT = {
+const WT_FALLBACK = {
   main: { name: "main", color: "var(--wt-main)" },
   frontend: { name: "wt/frontend", color: "var(--wt-frontend)" },
   api: { name: "wt/api", color: "var(--wt-api)" },
   tests: { name: "wt/tests", color: "var(--wt-tests)" },
 };
-const wtc = (k) => (WT[k] || WT.main).color;
-const wtn = (k) => (WT[k] || WT.main).name;
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
 export class Canvas {
-  constructor(els, { onSteer } = {}) {
+  constructor(els, { onSteer, onMerge, onOpenWorktree } = {}) {
     this.world = els.world;
     this.edgesSvg = els.edges;
     this.viewport = els.viewport;
@@ -26,6 +24,8 @@ export class Canvas {
     this.empty = els.empty;
     this.zl = els.zl;
     this.onSteer = onSteer;
+    this.onMerge = onMerge;
+    this.onOpenWorktree = onOpenWorktree;
 
     this.model = null;
     this.els = {};        // node id -> DOM el
@@ -64,7 +64,14 @@ export class Canvas {
       const base = "cnode t-" + n.type + (n.kind ? " k-" + n.kind : "");
       if (el._base !== base) { el.className = base; el._base = base; }
       const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.summary ? n.summary.length : 0}|${n.merged || ""}|${n.model || ""}`;
-      if (el._sig !== sig) { el.innerHTML = this._card(n); el._sig = sig; }
+      if (el._sig !== sig) {
+        el.innerHTML = this._card(n);
+        el._sig = sig;
+        if (n.type === "result") {
+          const mb = el.querySelector(".mergebtn");
+          if (mb) mb.addEventListener("click", (e) => { e.stopPropagation(); this.onMerge && this.onMerge(n); });
+        }
+      }
     }
 
     for (const e of m.edges) {
@@ -151,10 +158,10 @@ export class Canvas {
         <div class="osub" style="margin-top:5px">${esc(n.sub || "")}</div>
         <div class="think one">${esc(n.thought || "")}</div>`;
     if (n.type === "agent")
-      return `<div class="ahead"><span class="avatar" style="background:${wtc(n.wt)}">${I.agent}</span>
+      return `<div class="ahead"><span class="avatar" style="background:${this._wtColor(n.wt)}">${I.agent}</span>
         <div style="flex:1;min-width:0"><div class="lbl">${esc(n.title)}</div><div class="role">${esc(n.role || "")}</div></div>${pill}</div>
         <div class="think one">${esc(n.thought || "")}</div>
-        <div class="wttag"><span class="sw" style="background:${wtc(n.wt)}"></span>${wtn(n.wt)}${n.dur ? " · " + esc(n.dur) : ""}</div>`;
+        <div class="wttag"><span class="sw" style="background:${this._wtColor(n.wt)}"></span>${this._wtName(n.wt)}${n.dur ? " · " + esc(n.dur) : ""}</div>`;
     if (n.type === "tool")
       return `<div class="row"><span class="kic">${KIC[n.kind] || I.read}</span><span class="lbl">${esc(n.title)}</span>${pill}</div>
         <div class="file" style="margin-top:4px">${esc(n.file || "")}</div>
@@ -176,6 +183,16 @@ export class Canvas {
     return `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
   }
 
+  // lane color/name resolved from the model registry, with a static fallback
+  _wtColor(k) {
+    const m = this.model && this.model.wtMap && this.model.wtMap[k];
+    return (m && m.color) || (WT_FALLBACK[k] && WT_FALLBACK[k].color) || "var(--wt-main)";
+  }
+  _wtName(k) {
+    const m = this.model && this.model.wtMap && this.model.wtMap[k];
+    return (m && m.name) || (WT_FALLBACK[k] && WT_FALLBACK[k].name) || k || "main";
+  }
+
   // ---- inspector --------------------------------------------------------
   select(id) {
     const n = this.model.byId[id]; if (!n) return;
@@ -187,7 +204,7 @@ export class Canvas {
     const head = n.type === "tool" ? `${n.title} · ${n.file || ""}` : n.title;
     const tag = (txt) => `<span class="aw-pill" style="background:var(--color-background-secondary);color:var(--color-text-secondary)">${esc(txt)}</span>`;
 
-    let h = `<div class="crumb"><span class="sw" style="background:${wtc(n.wt)}"></span>${wtn(n.wt)} <span>›</span> ${n.type}</div>
+    let h = `<div class="crumb"><span class="sw" style="background:${this._wtColor(n.wt)}"></span>${this._wtName(n.wt)} <span>›</span> ${n.type}</div>
       <div class="inh">${esc(head)}</div>`;
     if (n.thought) h += `<div class="lead">“${esc(n.thought)}”</div>`;
     h += `<div class="pills"><span class="aw-pill ${sk}">${esc(sl)}</span>`;
@@ -215,7 +232,9 @@ export class Canvas {
       const t = this.inwrap.querySelector("#steertext").value.trim();
       if (t && this.onSteer) this.onSteer(n, t);
     };
-    this.target.innerHTML = `<span class="sw" style="background:${wtc(n.wt)}"></span>${esc(n.title)}`;
+    const open = this.inwrap.querySelector("#steeropen");
+    if (open) open.onclick = () => this.onOpenWorktree && this.onOpenWorktree(n);
+    this.target.innerHTML = `<span class="sw" style="background:${this._wtColor(n.wt)}"></span>${esc(n.title)}`;
     this.render();
   }
   deselect() {

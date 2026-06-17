@@ -22,9 +22,12 @@
         <span class="spacer"></span>
         <span class="conn" id="conn" title="bridge status">offline</span>
         <div class="srcsel" id="srcsel">
-          <button data-src="live" class="active">live</button>
-          <button data-src="sample">sample</button>
+          <button data-src="live" data-fixture="" class="active">live</button>
+          <button data-src="sample" data-fixture="flat">sample</button>
+          <button data-src="sample" data-fixture="parallel">parallel</button>
         </div>
+        <button class="replay" id="parallel" title="toggle parallel orchestration">single</button>
+        <button class="replay" id="stopall" style="display:none;color:var(--color-text-danger)">stop</button>
         <button class="replay" id="replay"><span class="aw-ic" id="ic-play"></span>replay</button>
         <div class="zc"><button id="zout">−</button><span class="zl" id="zl">100%</span><button id="zin">+</button><button id="fit">fit</button></div>
       </div>
@@ -38,6 +41,7 @@
         </div>
       </div>
       <div class="promptbar">
+        <input class="pinput repo" id="repo" style="display:none" placeholder="git repo path to orchestrate…"/>
         <div class="target" id="target"><span class="sw" style="background:var(--wt-main)"></span>orchestrator</div>
         <input class="pinput" id="prompt" placeholder="Message your agents — a new turn branches from the last result…"/>
         <button class="sendbtn" id="send"><span class="aw-ic" id="ic-up"></span></button>
