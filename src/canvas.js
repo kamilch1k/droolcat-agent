@@ -24,7 +24,7 @@ function mdToHtml(s) {
 }
 
 export class Canvas {
-  constructor(els, { onSteer, onMerge, onOpenWorktree } = {}) {
+  constructor(els, { onSteer, onNewLane, onPersist } = {}) {
     this.world = els.world;
     this.edgesSvg = els.edges;
     this.viewport = els.viewport;
@@ -35,20 +35,28 @@ export class Canvas {
     this.empty = els.empty;
     this.zl = els.zl;
     this.onSteer = onSteer;
-    this.onMerge = onMerge;
-    this.onOpenWorktree = onOpenWorktree;
+    this.onNewLane = onNewLane;
+    this.onPersist = onPersist;
 
     this.model = null;
     this.els = {};        // node id -> DOM el
     this.edgeEls = {};     // edge key -> path
+    this.notes = [];       // sticky notes (Miro board)
+    this.noteEls = {};
     this.cam = { x: 120, y: 60, s: 1 };
     this.selected = null;
     this.selWt = null;
 
     this._wireCamera(els);
+    this._initBoard();     // right-click menu + minimap
   }
 
   setModel(m) { this.model = m; }
+  setNotes(notes) {
+    this.notes = notes || [];
+    for (const id in this.noteEls) { this.noteEls[id].remove(); delete this.noteEls[id]; }
+    this._renderNotes();
+  }
 
   // (re)build DOM from the model, animating in new nodes
   sync() {
@@ -160,6 +168,8 @@ export class Canvas {
         this.headpill.className = "aw-pill"; this.headpill.textContent = "";
       }
     }
+    this._renderNotes();
+    this._renderMinimap();
   }
 
   _pill(el, n) {
@@ -333,6 +343,7 @@ export class Canvas {
   _applyCam() {
     this.world.style.transform = `translate(${this.cam.x}px,${this.cam.y}px) scale(${this.cam.s})`;
     if (this.zl) this.zl.textContent = Math.round(this.cam.s * 100) + "%";
+    this._renderMinimap();
   }
   zoom(f) { this.cam.s = Math.min(2, Math.max(0.25, this.cam.s * f)); this._easeCam(); this._applyCam(); }
   fit() {
@@ -362,6 +373,118 @@ export class Canvas {
     this.cam.y = r.height * 0.6 - (n.y + n.h / 2) * s;
     this._easeCam();
     this._applyCam();
+  }
+
+  // ---- Miro board: sticky notes ----------------------------------------
+  _renderNotes() {
+    const live = new Set(this.notes.map((n) => n.id));
+    for (const id in this.noteEls) if (!live.has(id)) { this.noteEls[id].remove(); delete this.noteEls[id]; }
+    for (const note of this.notes) {
+      let el = this.noteEls[note.id];
+      if (!el) { el = this._makeNote(note); this.noteEls[note.id] = el; this.world.appendChild(el); }
+      el.style.left = note.x + "px"; el.style.top = note.y + "px"; el.style.width = (note.w || 180) + "px";
+      el.style.background = note.color || "#fef6c7";
+      el.classList.toggle("pinned", !!note.pinned);
+    }
+  }
+  _makeNote(note) {
+    const el = document.createElement("div");
+    el.className = "note";
+    el.innerHTML = `<div class="notebar"><button class="np" title="pin">★</button><button class="nc" title="color">◑</button><button class="nx" title="delete">×</button></div><textarea class="nt" placeholder="note…">${esc(note.text || "")}</textarea>`;
+    const ta = el.querySelector(".nt");
+    ta.addEventListener("input", () => { note.text = ta.value; this.onPersist && this.onPersist(); });
+    ta.addEventListener("mousedown", (e) => e.stopPropagation());
+    el.querySelector(".nx").onclick = (e) => { e.stopPropagation(); this.notes = this.notes.filter((x) => x !== note); el.remove(); delete this.noteEls[note.id]; this.onPersist && this.onPersist(); };
+    el.querySelector(".np").onclick = (e) => { e.stopPropagation(); note.pinned = !note.pinned; el.classList.toggle("pinned", note.pinned); this.onPersist && this.onPersist(); };
+    const colors = ["#fef6c7", "#d7eafe", "#dcf5dd", "#fbe0e0", "#ece7fb"];
+    el.querySelector(".nc").onclick = (e) => { e.stopPropagation(); note.color = colors[(colors.indexOf(note.color) + 1) % colors.length]; el.style.background = note.color; this.onPersist && this.onPersist(); };
+    el.addEventListener("mousedown", (e) => {
+      if (e.target.closest(".nt") || e.target.closest("button")) return;
+      e.stopPropagation();
+      const sx = e.clientX, sy = e.clientY, ox = note.x, oy = note.y, sc = this.cam.s;
+      const mv = (ev) => { note.x = ox + (ev.clientX - sx) / sc; note.y = oy + (ev.clientY - sy) / sc; el.style.left = note.x + "px"; el.style.top = note.y + "px"; };
+      const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); this.onPersist && this.onPersist(); };
+      window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
+    });
+    return el;
+  }
+  addNote(x, y) {
+    const note = { id: "note" + Date.now().toString(36), x: x - 90, y: y - 36, w: 180, text: "", color: "#fef6c7", pinned: false };
+    this.notes.push(note);
+    this._renderNotes();
+    this.onPersist && this.onPersist();
+    const el = this.noteEls[note.id]; if (el) setTimeout(() => el.querySelector(".nt").focus(), 0);
+  }
+
+  // ---- right-click menu + minimap --------------------------------------
+  _initBoard() {
+    this.menu = document.createElement("div");
+    this.menu.className = "ctxmenu";
+    this.menu.style.display = "none";
+    this.viewport.appendChild(this.menu);
+    document.addEventListener("click", () => { this.menu.style.display = "none"; });
+    this.viewport.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const r = this.viewport.getBoundingClientRect();
+      const wx = (e.clientX - r.left - this.cam.x) / this.cam.s, wy = (e.clientY - r.top - this.cam.y) / this.cam.s;
+      this._showMenu(e.clientX - r.left, e.clientY - r.top, wx, wy);
+    });
+    this.minimap = document.createElement("canvas");
+    this.minimap.className = "minimap";
+    this.minimap.width = 168; this.minimap.height = 112;
+    this.viewport.appendChild(this.minimap);
+    this.minimap.addEventListener("mousedown", (e) => this._minimapNav(e));
+  }
+  _showMenu(px, py, wx, wy) {
+    const items = [
+      ["＋  Add note", () => this.addNote(wx, wy)],
+      ["⤳  New agent lane", () => this.onNewLane && this.onNewLane()],
+      ["⊡  Fit to content", () => this.fit()],
+    ];
+    this.menu.innerHTML = "";
+    for (const [label, fn] of items) {
+      const it = document.createElement("div");
+      it.className = "ctxitem"; it.textContent = label;
+      it.onclick = (ev) => { ev.stopPropagation(); this.menu.style.display = "none"; fn(); };
+      this.menu.appendChild(it);
+    }
+    this.menu.style.left = px + "px"; this.menu.style.top = py + "px"; this.menu.style.display = "block";
+  }
+  _bounds() {
+    let a = 1e9, b = 1e9, c = -1e9, d = -1e9;
+    const items = [...(this.model ? this.model.nodes : []), ...this.notes];
+    for (const n of items) { a = Math.min(a, n.x); b = Math.min(b, n.y); c = Math.max(c, n.x + (n.w || 180)); d = Math.max(d, n.y + (n.h || 80)); }
+    if (!isFinite(a)) return null;
+    return { a, b, c, d };
+  }
+  _renderMinimap() {
+    const cv = this.minimap; if (!cv) return;
+    const ctx = cv.getContext("2d");
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    const bb = this._bounds();
+    const r = this.viewport.getBoundingClientRect();
+    if (!bb || r.width < 2) { cv.style.display = "none"; return; }
+    cv.style.display = "block";
+    const pad = 8, bw = (bb.c - bb.a) || 1, bh = (bb.d - bb.b) || 1;
+    const sc = Math.min((cv.width - pad * 2) / bw, (cv.height - pad * 2) / bh);
+    const ox = pad - bb.a * sc, oy = pad - bb.b * sc;
+    this._mm = { sc, ox, oy };
+    ctx.fillStyle = "rgba(120,115,108,.5)";
+    for (const n of (this.model ? this.model.nodes : [])) ctx.fillRect(n.x * sc + ox, n.y * sc + oy, Math.max(2, (n.w || 80) * sc), Math.max(2, (n.h || 40) * sc));
+    ctx.fillStyle = "rgba(181,121,27,.6)";
+    for (const n of this.notes) ctx.fillRect(n.x * sc + ox, n.y * sc + oy, Math.max(2, (n.w || 180) * sc), Math.max(2, 60 * sc));
+    const vx = (-this.cam.x / this.cam.s) * sc + ox, vy = (-this.cam.y / this.cam.s) * sc + oy;
+    ctx.strokeStyle = "rgba(28,95,199,.9)"; ctx.lineWidth = 1.2;
+    ctx.strokeRect(vx, vy, (r.width / this.cam.s) * sc, (r.height / this.cam.s) * sc);
+  }
+  _minimapNav(e) {
+    e.stopPropagation();
+    if (!this._mm) return;
+    const rect = this.minimap.getBoundingClientRect();
+    const wx = (e.clientX - rect.left - this._mm.ox) / this._mm.sc, wy = (e.clientY - rect.top - this._mm.oy) / this._mm.sc;
+    const r = this.viewport.getBoundingClientRect();
+    this.cam.x = r.width / 2 - wx * this.cam.s; this.cam.y = r.height / 2 - wy * this.cam.s;
+    this._easeCam(); this._applyCam();
   }
 }
 

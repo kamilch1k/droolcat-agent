@@ -73,6 +73,19 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .cedge.on{opacity:1}
 .cedge.cross{stroke-dasharray:4 5;stroke:var(--color-text-tertiary)}
 
+/* Miro board: sticky notes, right-click menu, minimap */
+.note{position:absolute;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.14);min-height:70px;font-family:var(--ui)}
+.note.pinned{box-shadow:0 2px 8px rgba(0,0,0,.14),0 0 0 2px var(--wt-tests)}
+.notebar{display:flex;justify-content:flex-end;gap:3px;padding:4px 4px 0;opacity:0;transition:opacity .15s}
+.note:hover .notebar{opacity:1}
+.notebar button{background:rgba(0,0,0,.06);border:none;border-radius:4px;width:18px;height:18px;font-size:11px;line-height:1;color:#3a3a36;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.notebar button:hover{background:rgba(0,0,0,.13)}
+.note .nt{width:100%;border:none;background:transparent;resize:none;font-family:var(--ui);font-size:12px;color:#3a3a30;padding:2px 10px 10px;outline:none;min-height:50px;line-height:1.45;letter-spacing:0}
+.ctxmenu{position:absolute;z-index:50;background:var(--color-background-primary);border:0.5px solid var(--color-border-secondary);border-radius:var(--radius);box-shadow:0 6px 24px rgba(0,0,0,.16);padding:4px;min-width:170px}
+.ctxitem{font-size:12.5px;padding:7px 10px;border-radius:6px;cursor:pointer;color:var(--color-text-primary);white-space:nowrap}
+.ctxitem:hover{background:var(--color-background-secondary)}
+.minimap{position:absolute;right:12px;bottom:12px;z-index:20;background:rgba(255,255,255,.82);border:0.5px solid var(--color-border-secondary);border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.08);cursor:pointer}
+
 .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;text-align:center}
 .empty.hide{display:none}
 .emptyinner{max-width:340px}

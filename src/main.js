@@ -24,14 +24,20 @@ const canvas = new Canvas(
     inspector: $("inspector"), inwrap: $("inwrap"), headpill: $("headpill"),
     target: $("target"), empty: $("empty"), zl: $("zl"),
   },
-  { onSteer: (_node, text) => sendPrompt(text) }   // "follow up" from the inspector
+  {
+    onSteer: (_node, text) => sendPrompt(text),  // "follow up" from the inspector
+    onNewLane: () => newLane(),                  // right-click "new agent lane"
+    onPersist: () => scheduleSave(),             // notes moved/edited -> save
+  }
 );
 
 // ---- session (chat) state ----------------------------------------------
 
-let sessions = [];        // [{ id, title, claudeSessionId, graph }]
+let sessions = [];        // [{ id, title, graph, cwd, edits, notes, activeLane, laneClaudeId }]
 let cur = -1;             // index of the active chat
-let runningId = null;     // chat id whose claude turn is streaming
+let runningId = null;     // bridge session key (chatId::lane) currently streaming
+let runningChat = null;   // chat id of the streaming turn
+let runningLane = "main"; // lane id of the streaming turn
 const codeModel = new CodeGraphModel();
 let view = "agents";      // 'agents' | 'code'
 let codeLoaded = false;
@@ -47,9 +53,10 @@ const curChat = () => (cur >= 0 ? sessions[cur] : null);
 const chatById = (id) => sessions.find((s) => s.id === id);
 
 function newSession() {
-  const s = { id: newId(), title: "New chat", claudeSessionId: null, graph: new GraphModel(), cwd: "", edits: true };
+  const s = { id: newId(), title: "New chat", graph: new GraphModel(), cwd: "", edits: true, notes: [], activeLane: "main", laneClaudeId: {} };
   sessions.push(s);
   switchSession(sessions.length - 1);
+  scheduleSave();
 }
 
 function switchSession(i) {
@@ -58,15 +65,27 @@ function switchSession(i) {
   view = "agents";
   setView("agents");
   canvas.setModel(sessions[i].graph);
+  canvas.setNotes(sessions[i].notes);
   canvas.selWt = null;
   canvas.deselect();
   $("sesstitle").textContent = sessions[i].title;
   $("folder").value = sessions[i].cwd || "";
-  $("allowedits").checked = !!sessions[i].edits;
+  $("allowedits").checked = sessions[i].edits !== false;
   autoFit = true;
   renderSessions();
   canvas.sync();
   canvas.fit();
+  scheduleSave();
+}
+
+// start a new independent agent lane in the current chat — the next prompt
+// begins it as a separate column on the board
+function newLane() {
+  const s = curChat(); if (!s) return;
+  s.activeLane = "lane" + (s.graph.laneOrder.length + 1) + "-" + Math.random().toString(36).slice(2, 5);
+  setConn(tauri ? "live" : "", "new agent lane — type a prompt to start it");
+  $("prompt").focus();
+  scheduleSave();
 }
 
 // ---- Tauri bridge --------------------------------------------------------
@@ -97,25 +116,26 @@ function disableLive() {
 
 function handleEvent(evt) {
   if (!evt) return;
-  const s = chatById(runningId) || curChat();
+  const s = (runningChat && chatById(runningChat)) || curChat();
   if (!s) return;
-  if (evt.type === "system" && evt.session_id) s.claudeSessionId = evt.session_id; // for --resume
+  if (evt.type === "system" && evt.session_id) s.laneClaudeId[runningLane] = evt.session_id; // per-lane --resume
   s.graph.apply(evt);
   bump(s.graph);
 }
 
 function endTurn(ok) {
-  const s = chatById(runningId) || curChat();
+  const s = (runningChat && chatById(runningChat)) || curChat();
   if (s) {
     s.graph.endTurn(ok, ok ? "" : lastErr);
     // if a resumed turn failed, drop the stale session id so the next prompt
     // starts a fresh Claude session instead of failing again
-    if (!ok && /resume|conversation|no session|session id/i.test(lastErr)) s.claudeSessionId = null;
+    if (!ok && /resume|conversation|no session|session id/i.test(lastErr)) s.laneClaudeId[runningLane] = null;
     bump(s.graph);
   }
-  runningId = null;
+  runningId = null; runningChat = null;
   $("stopbtn").style.display = "none";
   setConn(tauri ? "live" : "", tauri ? "ready" : "browser (sample only)");
+  scheduleSave();
 }
 
 function bump(graph) {
@@ -149,27 +169,30 @@ async function sendPrompt(text) {
   if (runningId) { setConn("run", "still working — wait for this turn"); return; } // one turn at a time
   if (!curChat()) newSession();
   const s = curChat();
+  const lane = s.activeLane || "main";
 
-  s.graph.beginTurn(text);
+  s.graph.beginTurn(text, lane);
   if (s.title === "New chat") { s.title = clip(text, 40); }
   $("sesstitle").textContent = s.title;
   if (view !== "agents") setView("agents");
   if (canvas.model !== s.graph) canvas.setModel(s.graph);
   autoFit = true; fitPending = s.graph.turnCount === 1; // fit the first turn; follow later turns
   scheduleSync();
+  scheduleSave();
 
   const t = await getTauri();
   if (!t) { setConn("err", "no bridge — switch to sample"); s.graph.endTurn(false); scheduleSync(); return; }
-  runningId = s.id;
+  const key = s.id + "::" + lane;
+  runningId = key; runningChat = s.id; runningLane = lane;
   lastErr = "";
   $("stopbtn").style.display = "";
   setConn("run", "working…");
   try {
-    await t.invoke("start_session", { sessionId: s.id, prompt: text, resume: s.claudeSessionId, cwd: s.cwd || null, edits: !!s.edits });
+    await t.invoke("start_session", { sessionId: key, prompt: text, resume: s.laneClaudeId[lane] || null, cwd: s.cwd || null, edits: !!s.edits });
   } catch (err) {
     setConn("err", String(err));
     s.graph.endTurn(false, "Couldn't start the turn — " + String(err));
-    runningId = null; $("stopbtn").style.display = "none"; bump(s.graph);
+    runningId = null; runningChat = null; $("stopbtn").style.display = "none"; bump(s.graph);
   }
 }
 
@@ -279,7 +302,7 @@ function renderSessions() {
   h.innerHTML = "";
   if (!sessions.length) { h.innerHTML = `<div class="empty-side">No chats yet — type below to start.</div>`; return; }
   sessions.forEach((s, i) => {
-    const running = s.id === runningId;
+    const running = s.id === runningChat;
     const dot = running ? "var(--color-text-info)" : s.graph.turnCount ? "var(--color-text-success)" : "var(--color-border-secondary)";
     const d = document.createElement("div");
     d.className = "sessrow" + (i === cur ? " active" : "");
@@ -294,6 +317,39 @@ function setConn(cls, label) {
   const el = $("conn");
   el.className = "conn" + (cls ? " " + cls : "");
   el.textContent = label;
+}
+
+// ---- local persistence (saved like Claude Code sessions) ----------------
+
+const STORE = "droolcat.sessions.v1";
+let saveTimer = null;
+function scheduleSave() { clearTimeout(saveTimer); saveTimer = setTimeout(saveSessions, 500); }
+function saveSessions() {
+  try {
+    const data = {
+      cur,
+      sessions: sessions.map((s) => ({
+        id: s.id, title: s.title, cwd: s.cwd, edits: s.edits, activeLane: s.activeLane,
+        laneClaudeId: s.laneClaudeId, notes: s.notes, graph: s.graph.toJSON(),
+      })),
+    };
+    localStorage.setItem(STORE, JSON.stringify(data));
+  } catch (e) { console.warn("save failed", e); }
+}
+function loadSessions() {
+  try {
+    const raw = localStorage.getItem(STORE);
+    if (!raw) return false;
+    const d = JSON.parse(raw);
+    if (!d || !Array.isArray(d.sessions) || !d.sessions.length) return false;
+    sessions = d.sessions.map((s) => ({
+      id: s.id, title: s.title || "chat", cwd: s.cwd || "", edits: s.edits !== false,
+      activeLane: s.activeLane || "main", laneClaudeId: s.laneClaudeId || {},
+      notes: Array.isArray(s.notes) ? s.notes : [], graph: new GraphModel().fromJSON(s.graph),
+    }));
+    cur = Math.min(Math.max(0, d.cur || 0), sessions.length - 1);
+    return true;
+  } catch (e) { console.warn("load failed", e); return false; }
 }
 function clip(s, n) { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
@@ -312,8 +368,8 @@ function fireSend() {
   sendPrompt(v);
 }
 $("newsession").onclick = () => newSession();
-$("folder").addEventListener("change", () => { const s = curChat(); if (s) s.cwd = $("folder").value.trim(); });
-$("allowedits").addEventListener("change", () => { const s = curChat(); if (s) s.edits = $("allowedits").checked; });
+$("folder").addEventListener("change", () => { const s = curChat(); if (s) { s.cwd = $("folder").value.trim(); scheduleSave(); } });
+$("allowedits").addEventListener("change", () => { const s = curChat(); if (s) { s.edits = $("allowedits").checked; scheduleSave(); } });
 $("stopbtn").onclick = stopTurn;
 $("zin").onclick = () => { autoFit = false; canvas.zoom(1.15); };
 $("zout").onclick = () => { autoFit = false; canvas.zoom(1 / 1.15); };
@@ -323,5 +379,7 @@ $("viewport").addEventListener("mousedown", () => { autoFit = false; });
 
 // ---- boot ---------------------------------------------------------------
 
-newSession();          // start with one empty chat
+if (loadSessions()) switchSession(cur >= 0 ? cur : 0);  // restore saved chats
+else newSession();                                       // or start fresh
+window.addEventListener("beforeunload", saveSessions);
 wireBridge();

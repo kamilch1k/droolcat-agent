@@ -98,11 +98,19 @@ export class GraphModel {
     this.seq = 0;
     this.meta = { model: null, cwd: null, sessionId: null };
     this.wtMap = { main: { name: "main", color: "var(--wt-main)" } };
-    this.lastResultId = null;   // tail of the conversation — next turn chains here
-    this.turn = null;           // current turn's cursor
+    // a chat can hold multiple independent conversation LANES (parallel agents
+    // in one board). Each lane keeps its own tail so turns chain within it.
+    this.lanes = {};            // laneId -> { lastResultId, turns }
+    this.laneOrder = [];
+    this.turn = null;           // current (active) turn's cursor; carries laneId
     this.turnCount = 0;
     this.running = false;
     this.subCount = 0;
+  }
+
+  _lane(laneId) {
+    if (!this.lanes[laneId]) { this.lanes[laneId] = { lastResultId: null, turns: 0 }; this.laneOrder.push(laneId); }
+    return this.lanes[laneId];
   }
 
   _add(node) {
@@ -110,6 +118,7 @@ export class GraphModel {
     node.status = node.status || "run";
     node.detail = node.detail || {};
     if (!node.wt) node.wt = "main";
+    if (node.lane == null && this.turn) node.lane = this.turn.laneId;
     this.nodes.push(node);
     this.byId[node.id] = node;
     return node;
@@ -120,16 +129,17 @@ export class GraphModel {
   }
 
   // start a new turn from a user prompt — appended, never resetting
-  beginTurn(prompt) {
+  beginTurn(prompt, laneId = "main") {
     // close any still-open turn so the chain stays well-formed
     if (this.turn && !this.turn.resultId) this.endTurn(true);
-    this.turnCount++;
+    const lane = this._lane(laneId);
+    this.turnCount++; lane.turns++;
     const p = this._add({
-      type: "prompt", title: "You", text: prompt, turn: this.turnCount,
+      type: "prompt", title: "You", text: prompt, turn: lane.turns, lane: laneId,
       status: "done", detail: {},
     });
-    if (this.lastResultId) this._edge(this.lastResultId, p.id, { turn: true });
-    this.turn = { anchorId: p.id, lastId: p.id, byToolUse: {}, frontier: new Set([p.id]), tokAcc: 0, resultId: null, streamSay: null, streamBlocks: {}, usedPartials: false };
+    if (lane.lastResultId) this._edge(lane.lastResultId, p.id, { turn: true });
+    this.turn = { laneId, anchorId: p.id, lastId: p.id, byToolUse: {}, frontier: new Set([p.id]), tokAcc: 0, resultId: null, streamSay: null, streamBlocks: {}, usedPartials: false };
     this.running = true;
     return p;
   }
@@ -291,7 +301,7 @@ export class GraphModel {
     const leaves = [...t.frontier].filter((id) => id !== res.id);
     (leaves.length ? leaves : [t.anchorId]).forEach((id) => this._edge(id, res.id, { funnel: true }));
     t.resultId = res.id;
-    this.lastResultId = res.id;
+    this._lane(t.laneId).lastResultId = res.id;
     this.running = false;
   }
 
@@ -310,6 +320,33 @@ export class GraphModel {
     let running = 0;
     for (const n of this.nodes) if ((n.type === "tool" || n.type === "agent") && n.status === "run") running++;
     return { running, busy: this.running, turns: this.turnCount, done: !this.running, nodes: this.nodes.length };
+  }
+
+  // ---- persistence (the live `turn` cursor is transient, not saved) -------
+  toJSON() {
+    return {
+      nodes: this.nodes, edges: this.edges, meta: this.meta, wtMap: this.wtMap,
+      lanes: this.lanes, laneOrder: this.laneOrder,
+      turnCount: this.turnCount, subCount: this.subCount, seq: this.seq,
+    };
+  }
+  fromJSON(d) {
+    this.reset();
+    if (!d) return this;
+    this.nodes = Array.isArray(d.nodes) ? d.nodes : [];
+    this.edges = Array.isArray(d.edges) ? d.edges : [];
+    this.meta = d.meta || this.meta;
+    this.wtMap = d.wtMap || this.wtMap;
+    this.lanes = d.lanes || {};
+    this.laneOrder = d.laneOrder || Object.keys(this.lanes);
+    this.turnCount = d.turnCount || 0;
+    this.subCount = d.subCount || 0;
+    this.seq = d.seq || this.nodes.length;
+    this.byId = {};
+    for (const n of this.nodes) { this.byId[n.id] = n; n.h = undefined; } // re-measure on render
+    this.turn = null;
+    this.running = false;
+    return this;
   }
 }
 
