@@ -90,7 +90,7 @@ fn turn_log_path(session_id: &str) -> PathBuf {
 }
 
 /// Spawn one turn of a Claude Code conversation and stream its events.
-fn run_claude(app: AppHandle, session_id: String, prompt: String, cwd: String, resume: Option<String>) -> Result<(), String> {
+fn run_claude(app: AppHandle, session_id: String, prompt: String, cwd: String, resume: Option<String>, edits: bool) -> Result<(), String> {
     let bin = find_claude();
     let (program, pre) = shell_wrap(&bin);
     let mut cmd = Command::new(&program);
@@ -102,11 +102,17 @@ fn run_claude(app: AppHandle, session_id: String, prompt: String, cwd: String, r
         .arg("--output-format")
         .arg("stream-json")
         .arg("--verbose")
+        // stream token-by-token so text/nodes grow live instead of popping in
+        .arg("--include-partial-messages")
         // Interactive-only tools can't work in a headless -p turn (there's no UI
         // to answer) and would surface as an error node. Deny them so the agent
         // proceeds autonomously with a sensible default instead.
         .arg("--disallowedTools")
         .arg("AskUserQuestion");
+    if edits {
+        // let the agent actually write/edit files in the chat's folder
+        cmd.arg("--permission-mode").arg("acceptEdits").arg("--add-dir").arg(&cwd);
+    }
     if let Some(r) = resume.filter(|s| !s.trim().is_empty()) {
         cmd.arg("--resume").arg(r);
     }
@@ -182,6 +188,7 @@ fn start_session(
     prompt: String,
     cwd: Option<String>,
     resume: Option<String>,
+    edits: Option<bool>,
 ) -> Result<String, String> {
     if prompt.trim().is_empty() {
         return Err("empty prompt".into());
@@ -192,7 +199,7 @@ fn start_session(
         .or_else(|| std::env::var("USERPROFILE").ok())
         .or_else(|| std::env::var("HOME").ok())
         .unwrap_or_else(|| ".".into());
-    run_claude(app, sid.clone(), prompt, workdir, resume)?;
+    run_claude(app, sid.clone(), prompt, workdir, resume, edits.unwrap_or(false))?;
     Ok(sid)
 }
 

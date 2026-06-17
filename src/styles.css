@@ -101,6 +101,9 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 
 .t-prompt{background:var(--color-background-secondary)}
 .prompttext{font-size:12.5px;color:var(--color-text-primary);margin-top:5px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.saytext{font-size:12px;color:var(--color-text-primary);margin-top:6px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap}
+.caret{display:inline-block;width:6px;height:13px;background:var(--color-text-info);margin-left:1px;vertical-align:-2px;animation:blink 1s step-start infinite}
+@keyframes blink{50%{opacity:0}}
 .t-orch{background:var(--color-background-secondary)}
 .osub{font-size:11.5px;color:var(--color-text-secondary)}
 .t-agent .ahead{display:flex;align-items:center;gap:9px}
@@ -124,6 +127,12 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .rf{display:flex;align-items:center;gap:10px;margin-top:12px;padding-top:11px;border-top:0.5px solid var(--color-border-tertiary);font-family:var(--font-mono);font-size:11px;color:var(--color-text-tertiary)}
 .rf .mergebtn{margin-left:auto;background:var(--color-text-primary);border:none;color:#fff;border-radius:var(--radius);padding:7px 13px;font-size:12px;font-family:var(--ui)}
 
+.chatbar{display:flex;align-items:center;gap:8px;padding:8px 14px 0;font-size:11.5px}
+.cblabel{font-family:var(--font-mono);font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--color-text-tertiary)}
+.cbinput{flex:1;border:0.5px solid var(--color-border-tertiary);border-radius:var(--radius);padding:5px 9px;font-size:11.5px;font-family:var(--font-mono);outline:none;color:var(--color-text-secondary)}
+.cbinput:focus{border-color:var(--color-border-info)}
+.cbtoggle{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer;color:var(--color-text-secondary)}
+.cbtoggle input{accent-color:var(--wt-frontend)}
 .promptbar{padding:11px 14px;border-top:0.5px solid var(--color-border-tertiary);display:flex;align-items:center;gap:9px}
 .target{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--color-text-secondary);background:var(--color-background-secondary);border:0.5px solid var(--color-border-secondary);border-radius:var(--radius);padding:7px 9px;white-space:nowrap}
 .target .sw{width:8px;height:8px;border-radius:2px}

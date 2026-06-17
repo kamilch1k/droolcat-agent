@@ -26,10 +26,11 @@ const TITLE_BY_TOOL = {
 };
 
 export const SIZES = {
-  prompt: { w: 320, h: 60 },
-  agent: { w: 210, h: 118 },
-  tool: { w: 178, h: 86 },
-  result: { w: 460, h: 200 },
+  prompt: { w: 300, h: 56 },
+  say: { w: 300, h: 92 },
+  agent: { w: 196, h: 104 },
+  tool: { w: 168, h: 74 },
+  result: { w: 440, h: 176 },
 };
 
 // subagents (Task) get a cycling accent so parallel branches read distinctly
@@ -128,7 +129,7 @@ export class GraphModel {
       status: "done", detail: {},
     });
     if (this.lastResultId) this._edge(this.lastResultId, p.id, { turn: true });
-    this.turn = { anchorId: p.id, lastId: p.id, byToolUse: {}, frontier: new Set([p.id]), pendingThought: "", tokAcc: 0, resultId: null };
+    this.turn = { anchorId: p.id, lastId: p.id, byToolUse: {}, frontier: new Set([p.id]), tokAcc: 0, resultId: null, streamSay: null, streamBlocks: {}, usedPartials: false };
     this.running = true;
     return p;
   }
@@ -138,9 +139,68 @@ export class GraphModel {
     if (!this.turn) this.beginTurn("(session)");
     switch (evt.type) {
       case "system": return this._system(evt);
+      case "stream_event": return this._streamEvent(evt);
       case "assistant": return this._assistant(evt);
       case "user": return this._user(evt);
       case "result": return this._result(evt);
+    }
+  }
+
+  // chain a node after the turn's current tail
+  _chain(node) {
+    const t = this.turn;
+    this._edge(t.lastId, node.id);
+    t.frontier.delete(t.lastId);
+    t.frontier.add(node.id);
+    t.lastId = node.id;
+  }
+  _makeSay(text) {
+    return this._add({ type: "say", title: "Claude", text: String(text || ""), wt: "main", status: "run", detail: {} });
+  }
+  _makeToolNode(name, input = {}) {
+    if (name === "Task") {
+      const color = SUB_PALETTE[this.subCount++ % SUB_PALETTE.length];
+      const wt = "sub" + this.subCount;
+      this.wtMap[wt] = { name: clip(input.subagent_type || "subagent", 16), color };
+      return this._add({ type: "agent", wt, title: clip(input.description || input.subagent_type || "subagent", 22), role: input.subagent_type || "agent", thought: clip(input.prompt || input.description || "", 80), status: "run", detail: { think: input.prompt || "", input, events: [] } });
+    }
+    return this._add({ type: "tool", kind: kindOf(name), wt: "main", title: titleOf(name), file: targetOf(name, input), status: "run", detail: { input } });
+  }
+  _fillTool(node, name, input = {}) {
+    node.detail.input = input;
+    node.kind = kindOf(name);
+    node.title = titleOf(name);
+    const f = targetOf(name, input);
+    if (f) node.file = f;
+  }
+
+  // live token stream (--include-partial-messages): grow say nodes + open tools
+  _streamEvent(evt) {
+    const ev = evt.event;
+    const t = this.turn;
+    if (!ev || !t) return;
+    t.usedPartials = true;
+    if (ev.type === "content_block_start") {
+      const cb = ev.content_block || {};
+      if (cb.type === "text") {
+        const say = this._makeSay("");
+        this._chain(say);
+        t.streamSay = say;
+        t.streamBlocks[ev.index] = { type: "text", node: say };
+      } else if (cb.type === "tool_use") {
+        const node = this._makeToolNode(cb.name || "tool", cb.input || {});
+        this._chain(node);
+        if (cb.id) t.byToolUse[cb.id] = node;
+        t.streamBlocks[ev.index] = { type: "tool", node };
+      }
+    } else if (ev.type === "content_block_delta") {
+      const blk = t.streamBlocks[ev.index], d = ev.delta || {};
+      if (d.type === "text_delta" && blk && blk.type === "text" && blk.node) {
+        blk.node.text = (blk.node.text || "") + (d.text || "");
+      }
+    } else if (ev.type === "content_block_stop") {
+      const blk = t.streamBlocks[ev.index];
+      if (blk && blk.type === "text" && blk.node) { blk.node.status = "done"; if (t.streamSay === blk.node) t.streamSay = null; }
     }
   }
 
@@ -162,50 +222,28 @@ export class GraphModel {
     const tok = (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
     if (tok) t.tokAcc += tok;
 
-    const parent = t.lastId;
-    let lastCreated = null;
+    if (t.usedPartials) {
+      // nodes already streamed in via _streamEvent — fill tool inputs that
+      // arrived empty at block_start; don't duplicate
+      for (const block of content) {
+        if (block.type !== "tool_use") continue;
+        const node = t.byToolUse[block.id];
+        if (node) this._fillTool(node, block.name || "tool", block.input || {});
+        else { const n = this._makeToolNode(block.name || "tool", block.input || {}); this._chain(n); if (block.id) t.byToolUse[block.id] = n; }
+      }
+      return;
+    }
+
+    // no partial stream — build nodes from the full message, in order, so the
+    // turn reads You -> [Claude's words] -> tool -> ... like a conversation
     for (const block of content) {
       if (block.type === "text" && block.text && block.text.trim()) {
-        t.pendingThought = block.text.trim();
-        const p = this.byId[t.anchorId];
-        if (p && p.type === "prompt") p.reply = clip(t.pendingThought, 120);
+        const say = this._makeSay(clip2(block.text.trim(), 800)); say.status = "done"; this._chain(say);
       } else if (block.type === "tool_use") {
-        lastCreated = this._toolUse(block, parent);
+        const node = this._makeToolNode(block.name || "tool", block.input || {});
+        this._chain(node); if (block.id) t.byToolUse[block.id] = node;
       }
     }
-    if (lastCreated) t.lastId = lastCreated.id;
-  }
-
-  _toolUse(block, parent) {
-    const t = this.turn;
-    const name = block.name || "tool";
-    const input = block.input || {};
-    let node;
-    if (name === "Task") {
-      const color = SUB_PALETTE[this.subCount++ % SUB_PALETTE.length];
-      const wt = "sub" + this.subCount;
-      this.wtMap[wt] = { name: clip(input.subagent_type || "subagent", 16), color };
-      node = this._add({
-        type: "agent", wt,
-        title: clip(input.description || input.subagent_type || "subagent", 22),
-        role: input.subagent_type || "agent",
-        thought: clip(input.prompt || input.description || "", 80), status: "run",
-        detail: { think: input.prompt || "", input, events: [] },
-      });
-    } else {
-      node = this._add({
-        type: "tool", kind: kindOf(name), wt: "main",
-        title: titleOf(name), file: targetOf(name, input),
-        thought: clip(t.pendingThought, 64), status: "run",
-        detail: { input, think: clip(t.pendingThought, 200) },
-      });
-      t.pendingThought = "";
-    }
-    t.byToolUse[block.id] = node;
-    this._edge(parent, node.id);
-    t.frontier.delete(parent);
-    t.frontier.add(node.id);
-    return node;
   }
 
   _user(evt) {
@@ -235,6 +273,7 @@ export class GraphModel {
   _result(evt) {
     const t = this.turn;
     if (!t || t.resultId) return;
+    if (t.streamSay) { t.streamSay.status = "done"; t.streamSay = null; } // close any open stream
     const isErr = evt.is_error === true || evt.subtype === "error";
     const res = this._add({
       type: "result", wt: "main", status: "done",
@@ -321,7 +360,7 @@ export function layout(model) {
   }
 
   const roots = nodes.filter((n) => primaryParent[n.id] == null).map((n) => n.id);
-  const COL = 250, VGAP = 64;
+  const COL = 212, VGAP = 40;
   const x = {};
   let cursor = 0;
   const place = (id) => {

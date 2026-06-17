@@ -44,7 +44,7 @@ const curChat = () => (cur >= 0 ? sessions[cur] : null);
 const chatById = (id) => sessions.find((s) => s.id === id);
 
 function newSession() {
-  const s = { id: newId(), title: "New chat", claudeSessionId: null, graph: new GraphModel() };
+  const s = { id: newId(), title: "New chat", claudeSessionId: null, graph: new GraphModel(), cwd: "", edits: false };
   sessions.push(s);
   switchSession(sessions.length - 1);
 }
@@ -58,6 +58,8 @@ function switchSession(i) {
   canvas.selWt = null;
   canvas.deselect();
   $("sesstitle").textContent = sessions[i].title;
+  $("folder").value = sessions[i].cwd || "";
+  $("allowedits").checked = !!sessions[i].edits;
   autoFit = true;
   renderSessions();
   canvas.sync();
@@ -157,7 +159,7 @@ async function sendPrompt(text) {
   $("stopbtn").style.display = "";
   setConn("run", "working…");
   try {
-    await t.invoke("start_session", { sessionId: s.id, prompt: text, resume: s.claudeSessionId });
+    await t.invoke("start_session", { sessionId: s.id, prompt: text, resume: s.claudeSessionId, cwd: s.cwd || null, edits: !!s.edits });
   } catch (err) {
     setConn("err", String(err));
     s.graph.endTurn(false); runningId = null; $("stopbtn").style.display = "none"; scheduleSync();
@@ -238,9 +240,9 @@ async function loadCodeGraph() {
   codeLoaded = true;
 }
 function codeScanDir() {
-  // scan the dir the live session ran in (its system event carried cwd), else home is fine
+  // scan the chat's working folder if set, else where the session ran
   const s = curChat();
-  return (s && s.graph.meta && s.graph.meta.cwd) || ".";
+  return (s && s.cwd) || (s && s.graph.meta && s.graph.meta.cwd) || ".";
 }
 function touchedFiles() {
   const s = curChat();
@@ -303,6 +305,8 @@ function fireSend() {
   sendPrompt(v);
 }
 $("newsession").onclick = () => newSession();
+$("folder").addEventListener("change", () => { const s = curChat(); if (s) s.cwd = $("folder").value.trim(); });
+$("allowedits").addEventListener("change", () => { const s = curChat(); if (s) s.edits = $("allowedits").checked; });
 $("stopbtn").onclick = stopTurn;
 $("zin").onclick = () => { autoFit = false; canvas.zoom(1.15); };
 $("zout").onclick = () => { autoFit = false; canvas.zoom(1 / 1.15); };

@@ -150,6 +150,9 @@ export class Canvas {
     if (n.type === "prompt")
       return `<div class="row"><span class="aw-ic">${I.user}</span><span class="lbl">You</span><span class="meta" style="margin-left:auto">turn ${n.turn || 1}</span></div>
         <div class="prompttext">${esc(n.text || "")}</div>`;
+    if (n.type === "say")
+      return `<div class="row"><span class="aw-ic">${I.orch}</span><span class="lbl">Claude</span></div>
+        <div class="saytext">${esc(n.text || "")}${n.status === "run" ? '<span class="caret"></span>' : ""}</div>`;
     if (n.type === "orch")
       return `<div class="row"><span class="aw-ic">${I.orch}</span><span class="lbl">${esc(n.title)}</span>${pill}</div>
         <div class="osub" style="margin-top:5px">${esc(n.sub || "")}</div>
@@ -215,6 +218,7 @@ export class Canvas {
 
     let h = `<div class="crumb"><span class="sw" style="background:${this._wtColor(n.wt)}"></span>${this._wtName(n.wt)} <span>›</span> ${n.type}</div>
       <div class="inh">${esc(head)}</div>`;
+    if (n.type === "say" && n.text) h += `<div class="blk"><h4>Message</h4><div class="reason">${esc(n.text)}</div></div>`;
     if (n.thought) h += `<div class="lead">“${esc(n.thought)}”</div>`;
     h += `<div class="pills"><span class="aw-pill ${sk}">${esc(sl)}</span>`;
     if (n.role) h += tag(n.role);
