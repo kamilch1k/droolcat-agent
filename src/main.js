@@ -166,7 +166,7 @@ function showLaneConfirm(plan, cwd, prompt, t) {
     resetSession();
     $("sesstitle").textContent = `parallel · ${clip(prompt, 30)}`;
     live.cwd = cwd;
-    const sessionId = "orch-" + Date.now().toString(36);
+    const sessionId = "orch-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
     setConn("run", `orchestrating ${lanes.length} lanes…`);
     try {
       await t.invoke("start_orchestration", { sessionId, cwd, lanes, opts: { budget_usd: null, yolo: false } });
@@ -213,7 +213,11 @@ async function onMerge(resultNode) {
 }
 
 async function onOpenWorktree(node) {
-  if (source !== "live") return;
+  // only real git-worktree lanes have a directory to open (not the flat "main"
+  // lane, not a non-git session)
+  if (source !== "live" || !node || node.wt === "main" || !live.cwd) return;
+  const lane = live.lanes.find((l) => l.key === node.wt);
+  if (!lane || !lane.wt_dir) return;
   const t = await getTauri(); if (!t) return;
   try { await t.invoke("open_worktree", { cwd: live.cwd, sessionId: live.sessionId, key: node.wt }); } catch (err) { console.warn(err); }
 }

@@ -46,7 +46,11 @@ pub struct SessionOpts {
     pub yolo: Option<bool>,
 }
 
+// NOTE: these four structs cross the Tauri event bus to the webview, which
+// reads camelCase. Tauri's auto camelCase mapping applies only to command
+// ARGUMENT names, NOT to fields of structs you emit — so they need rename_all.
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct MergeOne {
     pub agent_id: String,
     pub status: String, // merged | conflict | empty | error
@@ -55,6 +59,7 @@ pub struct MergeOne {
 }
 
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct MergeReport {
     pub base_branch: String,
     pub ok: bool,
@@ -62,6 +67,7 @@ pub struct MergeReport {
 }
 
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct LaneInfo {
     pub agent_id: String,
     pub title: String,
@@ -71,6 +77,7 @@ pub struct LaneInfo {
 }
 
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct OrchestrationInfo {
     pub session_id: String,
     pub base: String,
@@ -131,6 +138,17 @@ pub fn freeze_base(dir: &str) -> Result<(String, String), String> {
     Ok((base, branch))
 }
 
+/// Deterministic 8-hex session namespace (FNV-1a) — collision-resistant across
+/// sessions so branch/worktree names never clobber another run's work.
+pub fn short_hash(s: &str) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x00000100000001B3);
+    }
+    format!("{:08x}", (h & 0xffff_ffff) as u32)
+}
+
 pub fn sanitize_key(k: &str) -> String {
     let s: String = k
         .chars()
@@ -153,7 +171,10 @@ pub fn worktree_root(repo_top: &str, sid8: &str) -> String {
         .to_string()
 }
 
-/// Create a worktree on a fresh branch; clean+retry once on a stale collision.
+/// Create a worktree on a fresh branch. NON-DESTRUCTIVE: never deletes a branch
+/// by name (that could clobber another session's kept work). Only prunes stale
+/// worktree *registrations* (safe) and retries; a genuine branch-name collision
+/// fails loudly so the caller can pick a new name.
 pub fn create_worktree(repo: &str, wt_dir: &str, branch: &str, base: &str) -> Result<(), String> {
     if let Some(parent) = Path::new(wt_dir).parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -162,9 +183,8 @@ pub fn create_worktree(repo: &str, wt_dir: &str, branch: &str, base: &str) -> Re
     if ok {
         return Ok(());
     }
-    // Clean a stale worktree/branch from a prior crashed run, then retry once.
-    let _ = git_run(repo, &["worktree", "remove", "--force", wt_dir]);
-    let _ = git_run(repo, &["branch", "-D", branch]);
+    // prune stale registrations from a crashed run (removes admin entries whose
+    // dirs are gone — never touches branches or live worktrees), then retry once.
     let _ = git_run(repo, &["worktree", "prune"]);
     let (ok2, _o2, err2) = git_run(repo, &["worktree", "add", "-b", branch, wt_dir, base]);
     if ok2 {

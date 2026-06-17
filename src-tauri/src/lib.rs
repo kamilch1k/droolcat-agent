@@ -111,6 +111,15 @@ fn lane_log_path(session_id: &str, agent_id: &str) -> PathBuf {
 
 // ---- the lane spawner (shared by flat + orchestrated paths) ---------------
 
+/// Decrement the live-lane countdown; emit orchestration-end when it hits zero.
+/// Called both on a lane's normal exit and when a lane fails to spawn, so the
+/// UI never hangs waiting on a lane that never started.
+fn dec_remaining(app: &AppHandle, session_id: &str, remaining: &Arc<AtomicUsize>) {
+    if remaining.fetch_sub(1, Ordering::SeqCst) == 1 {
+        let _ = app.emit("orchestration-end", serde_json::json!({ "sessionId": session_id, "ok": true }));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_lane(
     app: AppHandle,
@@ -139,10 +148,12 @@ fn spawn_lane(
     if autonomous {
         let mode = if opts.yolo.unwrap_or(false) { "bypassPermissions" } else { "acceptEdits" };
         cmd.arg("--permission-mode").arg(mode);
+        // Scope git to read + local-commit verbs only. Lanes must NOT move HEAD
+        // or rewrite refs in the shared repo metadata — Droolcat owns merge-back.
         cmd.arg("--allowedTools")
-            .arg("Read Edit MultiEdit Write Grep Glob LS Bash(git *) Bash(npm *) Bash(node *) Bash(cargo *) Bash(python *) Bash(pytest*)");
+            .arg("Read Edit MultiEdit Write Grep Glob LS Bash(git status*) Bash(git add*) Bash(git commit*) Bash(git diff*) Bash(git log*) Bash(npm *) Bash(node *) Bash(cargo *) Bash(python *) Bash(pytest*)");
         cmd.arg("--disallowedTools")
-            .arg("Bash(rm *) Bash(git push*) Bash(git reset*) Bash(curl*) Bash(wget*)");
+            .arg("Bash(rm *) Bash(git push*) Bash(git reset*) Bash(git checkout*) Bash(git switch*) Bash(git branch*) Bash(git rebase*) Bash(git merge*) Bash(git worktree*) Bash(git clean*) Bash(git stash*) Bash(curl*) Bash(wget*)");
         cmd.arg("--add-dir").arg(&cwd);
         if let Some(b) = opts.budget_usd {
             cmd.arg("--max-budget-usd").arg(format!("{b}"));
@@ -231,8 +242,10 @@ fn spawn_lane(
             }
         };
 
-        // auto-commit the lane's work (worktree lanes only)
-        let commit = if is_worktree {
+        // auto-commit the lane's work — ONLY on a clean exit. A killed/failed
+        // lane may have half-written files; committing that and reporting a sha
+        // would let the user merge garbage.
+        let commit = if is_worktree && ok {
             commit_lane(&cwd, &format!("droolcat lane {agent_id}"))
         } else {
             None
@@ -242,10 +255,7 @@ fn spawn_lane(
             "claude-end",
             serde_json::json!({ "agentId": agent_id, "ok": ok, "commit": commit }),
         );
-
-        if remaining.fetch_sub(1, Ordering::SeqCst) == 1 {
-            let _ = app_out.emit("orchestration-end", serde_json::json!({ "sessionId": session_id, "ok": true }));
-        }
+        dec_remaining(&app_out, &session_id, &remaining);
     });
 
     Ok(())
@@ -283,7 +293,10 @@ fn start_session(app: AppHandle, prompt: String, cwd: Option<String>, steer: Opt
     app.emit("orchestration-start", &info).ok();
 
     let remaining = Arc::new(AtomicUsize::new(1));
-    spawn_lane(app, session_id.clone(), "main".into(), "main".into(), workdir, prompt, false, SessionOpts::default(), false, remaining)?;
+    if let Err(e) = spawn_lane(app.clone(), session_id.clone(), "main".into(), "main".into(), workdir, prompt, false, SessionOpts::default(), false, remaining) {
+        let _ = app.emit("orchestration-end", serde_json::json!({ "sessionId": session_id, "ok": false }));
+        return Err(e);
+    }
     Ok(session_id)
 }
 
@@ -389,7 +402,7 @@ fn start_orchestration(
     if lanes.is_empty() {
         return Err("no lanes provided".into());
     }
-    let sid8: String = session_id.chars().take(8).collect();
+    let sid8 = short_hash(&session_id);
 
     if !is_git(&cwd) {
         let l = &lanes[0];
@@ -408,7 +421,10 @@ fn start_orchestration(
         };
         app.emit("orchestration-start", &info).ok();
         let remaining = Arc::new(AtomicUsize::new(1));
-        spawn_lane(app, session_id, "main".into(), "main".into(), cwd, l.prompt.clone(), true, opts, false, remaining)?;
+        if let Err(e) = spawn_lane(app.clone(), session_id.clone(), "main".into(), "main".into(), cwd, l.prompt.clone(), true, opts, false, remaining) {
+            let _ = app.emit("orchestration-end", serde_json::json!({ "sessionId": session_id, "ok": false }));
+            return Err(e);
+        }
         return Ok(info);
     }
 
@@ -431,7 +447,15 @@ fn start_orchestration(
         seen.insert(key.clone());
         let branch = format!("droolcat/{sid8}/{key}");
         let wt_dir = Path::new(&wt_root).join(&key).to_string_lossy().to_string();
-        create_worktree(&repo_top, &wt_dir, &branch, &base)?;
+        if let Err(e) = create_worktree(&repo_top, &wt_dir, &branch, &base) {
+            // roll back worktrees/branches already created THIS session (safe —
+            // we just made them) so a mid-loop failure leaves no orphans.
+            for prev in &infos {
+                remove_worktree(&repo_top, &prev.wt_dir);
+                let _ = git_run(&repo_top, &["branch", "-D", &prev.branch]);
+            }
+            return Err(e);
+        }
         infos.push(LaneInfo { agent_id: key.clone(), title: l.title.clone(), wt: key, branch, wt_dir });
     }
 
@@ -447,7 +471,7 @@ fn start_orchestration(
     let remaining = Arc::new(AtomicUsize::new(infos.len()));
     for (i, l) in lanes.iter().enumerate() {
         let li = &infos[i];
-        spawn_lane(
+        if let Err(e) = spawn_lane(
             app.clone(),
             session_id.clone(),
             li.agent_id.clone(),
@@ -458,7 +482,13 @@ fn start_orchestration(
             opts.clone(),
             true,
             remaining.clone(),
-        )?;
+        ) {
+            // never early-return: a failed lane must still count down so the
+            // last successful lane's exit (or this) fires orchestration-end.
+            eprintln!("droolcat: lane {} failed to spawn: {e}", li.agent_id);
+            let _ = app.emit("claude-end", serde_json::json!({ "agentId": li.agent_id, "ok": false, "commit": serde_json::Value::Null }));
+            dec_remaining(&app, &session_id, &remaining);
+        }
     }
     Ok(info)
 }
@@ -549,7 +579,7 @@ fn stop_all(app: AppHandle, session_id: String) -> Result<(), String> {
 #[tauri::command]
 fn open_worktree(cwd: String, session_id: String, key: String) -> Result<String, String> {
     let repo_top = repo_toplevel(&cwd)?;
-    let sid8: String = session_id.chars().take(8).collect();
+    let sid8 = short_hash(&session_id);
     let wt_dir = Path::new(&worktree_root(&repo_top, &sid8))
         .join(sanitize_key(&key))
         .to_string_lossy()
