@@ -321,7 +321,7 @@ export function layout(model) {
   }
 
   const roots = nodes.filter((n) => primaryParent[n.id] == null).map((n) => n.id);
-  const COL = 250, ROW = 152;
+  const COL = 250, VGAP = 64;
   const x = {};
   let cursor = 0;
   const place = (id) => {
@@ -332,12 +332,26 @@ export function layout(model) {
   };
   roots.forEach(place);
 
+  // row height per depth = tallest node at that depth, so a tall result node
+  // never overlaps the next turn's prompt (which hid the connecting edge)
+  let maxDepth = 0;
+  const rowH = {};
+  nodes.forEach((n) => {
+    const h = (SIZES[n.type] || SIZES.tool).h;
+    const d = depth[n.id];
+    rowH[d] = Math.max(rowH[d] || 0, h);
+    maxDepth = Math.max(maxDepth, d);
+  });
+  const yOf = {};
+  let acc = 0;
+  for (let d = 0; d <= maxDepth; d++) { yOf[d] = acc; acc += (rowH[d] || SIZES.tool.h) + VGAP; }
+
   let minX = Infinity, maxX = -Infinity, maxY = 0;
   nodes.forEach((n) => {
     const sz = SIZES[n.type] || SIZES.tool;
     n.w = sz.w; n.h = sz.h;
     n.x = (x[n.id] || 0) + COL / 2 - n.w / 2;
-    n.y = depth[n.id] * ROW;
+    n.y = yOf[depth[n.id]] || 0;
     minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h);
   });
   if (!isFinite(minX)) { minX = 0; maxX = 600; }
