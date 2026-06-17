@@ -101,7 +101,12 @@ fn run_claude(app: AppHandle, session_id: String, prompt: String, cwd: String, r
         .arg(&prompt)
         .arg("--output-format")
         .arg("stream-json")
-        .arg("--verbose");
+        .arg("--verbose")
+        // Interactive-only tools can't work in a headless -p turn (there's no UI
+        // to answer) and would surface as an error node. Deny them so the agent
+        // proceeds autonomously with a sensible default instead.
+        .arg("--disallowedTools")
+        .arg("AskUserQuestion");
     if let Some(r) = resume.filter(|s| !s.trim().is_empty()) {
         cmd.arg("--resume").arg(r);
     }
