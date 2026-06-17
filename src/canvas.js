@@ -13,6 +13,16 @@ const WT_FALLBACK = {
 };
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
+// light, safe markdown -> HTML for Claude Code output (escape first, then format)
+function mdToHtml(s) {
+  s = esc(String(s || ""));
+  s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, (_m, _l, c) => `<pre>${c.replace(/\n+$/, "")}</pre>`);
+  s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+  s = s.replace(/^(#{1,4})\s+(.+)$/gm, "<b>$2</b>");
+  return s;
+}
+
 export class Canvas {
   constructor(els, { onSteer, onMerge, onOpenWorktree } = {}) {
     this.world = els.world;
@@ -64,8 +74,15 @@ export class Canvas {
       // base class is set once; render() owns the state classes (show/running/sel/dim)
       const base = "cnode t-" + n.type + (n.kind ? " k-" + n.kind : "");
       if (el._base !== base) { el.className = base; el._base = base; }
-      const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.text || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.summary ? n.summary.length : 0}|${n.meta || ""}|${n.model || ""}`;
-      if (el._sig !== sig) { el.innerHTML = this._card(n); el._sig = sig; }
+      const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.text || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.summary ? n.summary.length : 0}|${n.meta || ""}|${n.model || ""}|${n.expanded ? 1 : 0}`;
+      if (el._sig !== sig) {
+        el.innerHTML = this._card(n);
+        el._sig = sig;
+        if (n.type === "result") {
+          const b = el.querySelector(".outbtn");
+          if (b) b.addEventListener("click", (e) => { e.stopPropagation(); n.expanded = !n.expanded; el._sig = null; this.sync(); });
+        }
+      }
     }
 
     for (const e of m.edges) {
@@ -188,10 +205,16 @@ export class Canvas {
       return `<div class="row"><span class="sw" style="width:8px;height:8px;border-radius:2px;background:${this._wtColor(n.wt)};display:inline-block;flex:none"></span><span class="lbl">${esc(n.title)}</span><span class="langbadge">${esc(n.lang || "")}</span></div>
         <div class="file" style="margin-top:4px">${esc(n.dir || ".")}</div>
         <div class="fmeta">${n.importedBy || 0} in · ${n.imports || 0} out</div>`;
-    if (n.type === "result")
+    if (n.type === "result") {
+      const full = String(n.summary || "");
+      const long = full.length > 300;
+      const collapsed = long && !n.expanded;
+      const shown = collapsed ? full.slice(0, 300).replace(/\s+\S*$/, "") : full;
+      const btn = long ? `<button class="outbtn">${n.expanded ? "▴ collapse" : "▾ expand full output"}</button>` : "";
       return `<div class="rh"><span class="aw-ic" style="color:${n.donePill && n.donePill.k === "danger" ? "var(--color-text-danger)" : "var(--color-text-success)"}">${I.check}</span>
         <span class="lbl">${esc(n.title)}</span><span class="meta">${esc(n.meta || "")}</span></div>
-        <div class="summary">${esc(clipSummary(n.summary))}</div>`;
+        <div class="output">${mdToHtml(shown)}${collapsed ? "…" : ""}</div>${btn}`;
+    }
     return "";
   }
 
