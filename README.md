@@ -91,8 +91,10 @@ Captured live transcripts are teed to `sessions/*.jsonl` (gitignored).
       lane in its own git worktree off a frozen base; deep per-agent detail;
       human-gated sequential merge-back with conflict detection. The flat loop
       is the N=1 case. (`milestone-2`)
-- [ ] **3 · Code Graph.** Static analysis → structural graph; highlight
-      agent-touched nodes; cross-link to the Agent Graph.
+- [x] **3 · Code Graph.** Multi-language repo scanner (files + intra-repo import
+      edges) → a directory-clustered structural graph; an `agents | code` view
+      switch; live highlight of the files the agent session is touching
+      (cross-link). (`milestone-3`)
 - [ ] **4 · Window Graph.** Workspace map tying editors, diffs, terminals, and
       agent branches together.
 - [ ] **5 · Parity polish.** Surface MCP, hooks, slash commands, permissions,
