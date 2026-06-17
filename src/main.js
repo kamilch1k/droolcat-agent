@@ -35,7 +35,8 @@ let view = "agents";      // 'agents' | 'code'
 let codeLoaded = false;
 let source = "live";      // 'live' | 'sample'
 let tauri = null;
-let autoFit = true;
+let autoFit = true;       // follow the conversation until the user pans/zooms
+let fitPending = false;   // do a full fit on the next sync (turn start / switch)
 let syncQueued = false;
 
 const newId = () => "chat-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
@@ -118,9 +119,15 @@ function scheduleSync() {
   const run = () => {
     if (!syncQueued) return;
     syncQueued = false;
+    // ALWAYS lay out before rendering — otherwise a freshly-created node has no
+    // x/y/w yet and renders broken at the corner (left:undefinedpx)
+    if (canvas.model && typeof canvas.model.beginTurn === "function") layout(canvas.model);
     canvas.sync();
     renderSessions();
-    if (autoFit) canvas.fit();
+    if (autoFit) {
+      if (fitPending) { fitPending = false; canvas.fit(); }
+      else canvas.follow();   // pan to the newest node at constant zoom (no jumpy refit)
+    }
   };
   requestAnimationFrame(run);
   setTimeout(run, 120);
@@ -141,7 +148,7 @@ async function sendPrompt(text) {
   $("sesstitle").textContent = s.title;
   if (view !== "agents") setView("agents");
   if (canvas.model !== s.graph) canvas.setModel(s.graph);
-  autoFit = true;
+  autoFit = true; fitPending = s.graph.turnCount === 1; // fit the first turn; follow later turns
   scheduleSync();
 
   const t = await getTauri();
@@ -182,7 +189,7 @@ async function replaySampleTurn() {
   if (view !== "agents") setView("agents");
   s.graph.beginTurn("Refactor auth and add tests across the 3 packages");
   if (s.title === "New chat") { s.title = "Auth refactor"; $("sesstitle").textContent = s.title; }
-  autoFit = true;
+  autoFit = true; fitPending = s.graph.turnCount === 1;
   setConn("", "replaying…");
   let i = 0;
   const step = () => {

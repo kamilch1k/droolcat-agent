@@ -302,6 +302,19 @@ export class Canvas {
     this.cam.y = pad - b * this.cam.s;
     this._applyCam();
   }
+
+  // pan (no zoom change) so the newest node stays in view — like a chat
+  // scrolling down as it works, instead of a jumpy refit on every event
+  follow() {
+    const m = this.model; if (!m || !m.nodes.length) return;
+    const r = this.viewport.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return;
+    const n = m.nodes[m.nodes.length - 1];
+    const s = this.cam.s;
+    this.cam.x = r.width / 2 - (n.x + n.w / 2) * s;
+    this.cam.y = r.height * 0.6 - (n.y + n.h / 2) * s;
+    this._applyCam();
+  }
 }
 
 function clipSummary(s) {
