@@ -19,6 +19,7 @@ export const I = {
   plus: SVG('<path d="M8 3v10M3 8h10"/>'),
   mic: SVG('<rect x="6" y="2.4" width="4" height="7" rx="2"/><path d="M4 8a4 4 0 0 0 8 0M8 12v1.6M6 13.6h4"/>'),
   compact: SVG('<path d="M4 6.2l4 3 4-3M4 10.2l4 3 4-3"/>'),
+  copy: SVG('<rect x="5.4" y="5.4" width="7.2" height="7.2" rx="1.4"/><path d="M10.6 5.4V4a1.4 1.4 0 0 0-1.4-1.4H4.4A1.4 1.4 0 0 0 3 4v4.8a1.4 1.4 0 0 0 1.4 1.4h1"/>'),
   up: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12.5V4M4.5 7.5L8 4l3.5 3.5"/></svg>`,
   play: SVG('<path d="M5 3.5l7 4.5-7 4.5z" fill="currentColor" stroke="none"/>'),
   // big empty-state glyph

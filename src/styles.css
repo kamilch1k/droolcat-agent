@@ -130,8 +130,39 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 
 .t-prompt{background:var(--color-background-secondary)}
 .prompttext{font-size:12.5px;color:var(--color-text-primary);margin-top:5px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.saytext{font-size:12px;color:var(--color-text-primary);margin-top:6px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:14;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap}
-.saytext.expanded{display:block;-webkit-line-clamp:unset;overflow:visible}
+.saytext{font-size:12px;color:var(--color-text-primary);margin-top:6px;line-height:1.5;overflow:hidden;position:relative;white-space:pre-wrap;word-break:break-word}
+.saytext.clamped{max-height:220px}
+.saytext.clamped::after{content:"";position:absolute;left:0;right:0;bottom:0;height:30px;background:linear-gradient(transparent,var(--color-background-primary));pointer-events:none}
+.saytext.expanded{max-height:none}
+
+/* shared light markdown styling (Claude responses, inspector) */
+.md b,.md strong{font-weight:600;color:var(--color-text-primary)}
+.md code{font-family:var(--font-mono);font-size:.9em;background:var(--color-background-tertiary);border-radius:4px;padding:0 4px}
+.md pre{font-family:var(--font-mono);font-size:11px;background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:6px;padding:8px 10px;overflow-x:auto;margin:6px 0;white-space:pre;color:var(--color-text-secondary)}
+
+/* copy button on content nodes */
+.copybtn{margin-left:auto;flex:none;background:none;border:none;color:var(--color-text-tertiary);width:22px;height:20px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:12px;opacity:0;transition:opacity .12s}
+.cnode:hover .copybtn{opacity:.65}
+.copybtn:hover{opacity:1;background:var(--color-background-tertiary);color:var(--color-text-primary)}
+.copybtn.ok{opacity:1;color:var(--color-text-success)}
+.copybtn .aw-ic svg{width:13px;height:13px}
+.rh .copybtn{margin-left:6px}
+
+/* tool result chip (edit +/-, read lines, …) */
+.file.fr{display:flex;align-items:center;gap:6px}
+.file.fr .fp{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.rchip{flex:none;font-family:var(--font-mono);font-size:9.5px;color:var(--color-text-secondary);background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:5px;padding:1px 6px}
+
+/* TodoWrite checklist node */
+.todolist{list-style:none;margin:8px 0 1px;padding:0;display:flex;flex-direction:column;gap:6px}
+.tdi{display:flex;align-items:flex-start;gap:8px;font-size:11.5px;line-height:1.35}
+.tdi .tdbox{width:13px;height:13px;border-radius:3px;border:1.5px solid var(--color-border-secondary);flex:none;margin-top:1px;position:relative}
+.tdi.done .tdbox{background:var(--color-text-success);border-color:var(--color-text-success)}
+.tdi.done .tdbox::after{content:"";position:absolute;left:4px;top:1px;width:3px;height:6px;border:solid #fff;border-width:0 1.6px 1.6px 0;transform:rotate(45deg)}
+.tdi.active .tdbox{border-color:var(--color-text-info);background:var(--color-background-info)}
+.tdi.done .tdt{color:var(--color-text-tertiary);text-decoration:line-through}
+.tdi.active .tdt{color:var(--color-text-primary);font-weight:500}
+.tdi.pend .tdt{color:var(--color-text-secondary)}
 .caret{display:inline-block;width:6px;height:13px;background:var(--color-text-info);margin-left:1px;vertical-align:-2px;animation:blink 1s step-start infinite}
 @keyframes blink{50%{opacity:0}}
 .t-orch{background:var(--color-background-secondary)}

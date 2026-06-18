@@ -17,6 +17,7 @@ const KIND_BY_TOOL = {
   Bash: "bash", BashOutput: "bash", KillShell: "bash",
   Grep: "search", Glob: "search", LS: "search",
   WebFetch: "web", WebSearch: "web",
+  TodoWrite: "todo",
 };
 const TITLE_BY_TOOL = {
   Read: "read", NotebookRead: "read",
@@ -313,8 +314,15 @@ export class GraphModel {
       const isErr = block.is_error === true;
       if (node.type === "tool") {
         const diff = node.kind === "edit" ? diffFromEdit(node.detail.input) : null;
-        if (diff && diff.length) node.detail.diff = diff;
-        else node.detail.out = clip2(out, 1600);
+        if (diff && diff.length) {
+          node.detail.diff = diff;
+          const ad = diff.filter((d) => d[0] === "ad").length, rm = diff.filter((d) => d[0] === "rm").length;
+          node.resultChip = `+${ad} −${rm}`;
+        } else {
+          node.detail.out = clip2(out, 1600);
+          if (node.kind === "read" && !isErr) { const ln = String(out).split("\n").length; if (ln > 1) node.resultChip = `${ln} lines`; }
+          if (node.kind === "write" && !isErr) node.resultChip = "written";
+        }
         if (isErr) node.donePill = { l: "error", k: "danger" };
         else if (node.kind === "bash") node.donePill = bashPill(out);
       } else if (node.type === "agent") {
@@ -532,7 +540,7 @@ export function layout(model) {
   // 1) base positions (centered per tidy-tree column)
   nodes.forEach((n) => {
     const sz = SIZES[n.type] || SIZES.tool;
-    n.w = sz.w;
+    n.w = n.kind === "todo" ? 236 : sz.w;
     if (!(typeof n.h === "number" && n.h)) n.h = sz.h; // keep measured height if set
     n.x = (x[n.id] || 0) + COL / 2 - n.w / 2;
     n.y = yOf[depth[n.id]] || 0;

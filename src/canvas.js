@@ -98,10 +98,12 @@ export class Canvas {
       // compact must be applied BEFORE we measure heights, so the layout reflows
       const compact = compactOf(n);
       if (el._compact !== compact) { el.classList.toggle("compact", compact); el._compact = compact; }
-      const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.text || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.summary ? n.summary.length : 0}|${n.meta || ""}|${n.model || ""}|${n.mode || ""}|${n.ctx || ""}|${n.turns || 0}|${n.expanded ? 1 : 0}|${n.collapsed ? 1 : 0}|${this.searchHits && this.searchHits.includes(n.id) ? 1 : 0}`;
+      const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.text || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.resultChip || ""}|${n.summary ? n.summary.length : 0}|${n.meta || ""}|${n.model || ""}|${n.mode || ""}|${n.ctx || ""}|${n.turns || 0}|${n.expanded ? 1 : 0}|${n.collapsed ? 1 : 0}|${this.searchHits && this.searchHits.includes(n.id) ? 1 : 0}`;
       if (el._sig !== sig) {
         el.innerHTML = this._card(n);
         el._sig = sig;
+        const cp = el.querySelector(".copybtn");
+        if (cp) cp.addEventListener("click", (e) => { e.stopPropagation(); this._copy(n, cp); });
         if (n.type === "result" || n.type === "say") {
           const b = el.querySelector(".outbtn");
           if (b) b.addEventListener("click", (e) => {
@@ -133,7 +135,7 @@ export class Canvas {
     // content doesn't overlap. Only for the agent graph (cards vary by text).
     if (typeof m.beginTurn === "function") {
       for (const n of m.nodes) {
-        const el = this.els[n.id]; if (el) el.style.width = ((SIZES[n.type] || SIZES.tool).w) + "px";
+        const el = this.els[n.id]; if (el) el.style.width = (n.kind === "todo" ? 236 : (SIZES[n.type] || SIZES.tool).w) + "px";
       }
       void this.world.offsetHeight;
       for (const n of m.nodes) {
@@ -217,6 +219,27 @@ export class Canvas {
     pl.textContent = l;
   }
 
+  _copyBtn() { return `<button class="copybtn" title="copy">${I.copy}</button>`; }
+  _todoList(todos) {
+    const list = Array.isArray(todos) ? todos : [];
+    const items = list.slice(0, 12).map((t) => {
+      const st = t.status || "pending";
+      const cls = st === "completed" ? "done" : st === "in_progress" ? "active" : "pend";
+      const label = st === "in_progress" ? (t.activeForm || t.content) : t.content;
+      return `<li class="tdi ${cls}"><span class="tdbox"></span><span class="tdt">${esc(label || "")}</span></li>`;
+    }).join("");
+    const more = list.length > 12 ? `<li class="tdi pend"><span class="tdbox" style="visibility:hidden"></span><span class="tdt">…+${list.length - 12} more</span></li>` : "";
+    return `<ul class="todolist">${items}${more}</ul>`;
+  }
+  _copy(n, btn) {
+    let txt = n.type === "say" ? n.text
+      : n.type === "result" ? n.summary
+      : n.detail && (n.detail.out || (n.detail.diff ? n.detail.diff.map((d) => d[1]).join("\n") : ""));
+    txt = String(txt || n.text || "");
+    const ok = () => { if (!btn) return; const o = btn.innerHTML; btn.classList.add("ok"); btn.innerHTML = "✓"; setTimeout(() => { btn.innerHTML = o; btn.classList.remove("ok"); }, 1100); };
+    try { navigator.clipboard.writeText(txt).then(ok, ok); } catch { ok(); }
+  }
+
   _card(n) {
     const pill = `<span class="aw-pill pill"></span>`;
     if (n.type === "lane") {
@@ -238,10 +261,10 @@ export class Canvas {
       return `<div class="row"><span class="aw-ic">${I.user}</span><span class="lbl">You</span><span class="meta" style="margin-left:auto">turn ${n.turn || 1}</span></div>
         <div class="prompttext">${esc(n.text || "")}</div>`;
     if (n.type === "say") {
-      const long = (n.text || "").length > 600; // ~ the 14-line clamp; only show when expanding reveals more
+      const long = (n.text || "").length > 480; // expanding reveals meaningfully more
       const btn = long ? `<button class="outbtn">${n.expanded ? "▴ less" : "▾ more"}</button>` : "";
-      return `<div class="row"><span class="aw-ic">${I.orch}</span><span class="lbl">Claude</span></div>
-        <div class="saytext${n.expanded ? " expanded" : ""}">${esc(n.text || "")}${n.status === "run" ? '<span class="caret"></span>' : ""}</div>${btn}`;
+      return `<div class="row"><span class="aw-ic">${I.orch}</span><span class="lbl">Claude</span>${this._copyBtn()}</div>
+        <div class="saytext md${n.expanded ? " expanded" : long ? " clamped" : ""}">${mdToHtml(n.text || "")}${n.status === "run" ? '<span class="caret"></span>' : ""}</div>${btn}`;
     }
     if (n.type === "orch")
       return `<div class="row"><span class="aw-ic">${I.orch}</span><span class="lbl">${esc(n.title)}</span>${pill}</div>
@@ -252,10 +275,15 @@ export class Canvas {
         <div style="flex:1;min-width:0"><div class="lbl">${esc(n.title)}</div><div class="role">${esc(n.role || "")}</div></div>${pill}</div>
         <div class="think one">${esc(n.thought || "")}</div>
         <div class="wttag"><span class="sw" style="background:${this._wtColor(n.wt)}"></span>${this._wtName(n.wt)}${n.dur ? " · " + esc(n.dur) : ""}</div>`;
-    if (n.type === "tool")
+    if (n.type === "tool") {
+      if (n.kind === "todo")
+        return `<div class="row"><span class="kic">${I.synth}</span><span class="lbl">to-dos</span>${pill}</div>
+          ${this._todoList(n.detail && n.detail.input && n.detail.input.todos)}`;
+      const chip = n.resultChip ? `<span class="rchip">${esc(n.resultChip)}</span>` : "";
       return `<div class="row"><span class="kic">${KIC[n.kind] || I.read}</span><span class="lbl">${esc(n.title)}</span>${pill}</div>
-        <div class="file" style="margin-top:4px">${esc(n.file || "")}</div>
+        <div class="file fr" style="margin-top:4px"><span class="fp">${esc(n.file || "")}</span>${chip}</div>
         <div class="think one">${esc(n.thought || "")}</div>`;
+    }
     if (n.type === "synth")
       return `<div class="row"><span class="aw-ic">${I.synth}</span><span class="lbl">${esc(n.title)}</span>${pill}</div>
         <div class="think one">${esc(n.thought || "")}</div>`;
@@ -272,8 +300,8 @@ export class Canvas {
       const shown = collapsed ? full.slice(0, 420).replace(/\s+\S*$/, "") : full;
       const btn = full.length > 280 ? `<button class="outbtn">${collapsed ? "▾ expand full output" : "▴ collapse"}</button>` : "";
       return `<div class="rh"><span class="aw-ic" style="color:${n.donePill && n.donePill.k === "danger" ? "var(--color-text-danger)" : "var(--color-text-success)"}">${I.check}</span>
-        <span class="lbl">${esc(n.title)}</span><span class="meta">${esc(n.meta || "")}</span></div>
-        <div class="output">${mdToHtml(shown)}${collapsed ? "…" : ""}</div>${btn}`;
+        <span class="lbl">${esc(n.title)}</span><span class="meta">${esc(n.meta || "")}</span>${this._copyBtn()}</div>
+        <div class="output md">${mdToHtml(shown)}${collapsed ? "…" : ""}</div>${btn}`;
     }
     return "";
   }
@@ -406,7 +434,7 @@ export class Canvas {
 
     let h = `<div class="crumb"><span class="sw" style="background:${this._wtColor(n.wt)}"></span>${this._wtName(n.wt)} <span>›</span> ${n.type}</div>
       <div class="inh">${esc(head)}</div>`;
-    if (n.type === "say" && n.text) h += `<div class="blk"><h4>Message</h4><div class="reason">${esc(n.text)}</div></div>`;
+    if (n.type === "say" && n.text) h += `<div class="blk"><h4>Message</h4><div class="reason md">${mdToHtml(n.text)}</div></div>`;
     if (n.thought) h += `<div class="lead">“${esc(n.thought)}”</div>`;
     h += `<div class="pills"><span class="aw-pill ${sk}">${esc(sl)}</span>`;
     if (n.role) h += tag(n.role);
@@ -415,7 +443,7 @@ export class Canvas {
     if (d.dur) h += tag(d.dur);
     h += `</div>`;
 
-    if (n.summary) h += `<div class="blk"><h4>Summary</h4><div class="reason">${esc(n.summary)}</div></div>`;
+    if (n.summary) h += `<div class="blk"><h4>Summary</h4><div class="reason md">${mdToHtml(n.summary)}</div></div>`;
     if (d.think) h += `<div class="blk"><h4>What it's doing</h4><div class="reason">${esc(d.think)}</div></div>`;
     if (d.input) h += `<div class="blk"><h4>Tool input</h4><div class="code">${this._input(d.input)}</div></div>`;
     if (d.diff) h += `<div class="blk"><h4>Diff</h4><div class="code diff">${d.diff.map(([c, t]) => `<span class="${c}">${esc(t)}</span>`).join("")}</div></div>`;
