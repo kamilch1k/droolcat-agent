@@ -112,6 +112,7 @@ export class GraphModel {
     this.turnCount = 0;
     this.running = false;
     this.subCount = 0;
+    this.cost = 0;              // running session cost in USD (sum of result costs)
   }
 
   _lane(laneId) {
@@ -277,6 +278,9 @@ export class GraphModel {
     const u = msg.usage || {};
     const tok = (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
     if (tok) t.tokAcc += tok;
+    // latest context-window usage = this message's input + cached input
+    const ctxNow = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+    if (ctxNow) t.ctxNow = ctxNow;
 
     if (t.usedPartials) {
       // nodes already streamed in via _streamEvent — fill tool inputs that
@@ -356,8 +360,9 @@ export class GraphModel {
     t.resultId = res.id;
     const lane = this._lane(t.laneId);
     lane.lastResultId = res.id;
+    if (typeof evt.total_cost_usd === "number") this.cost += evt.total_cost_usd;
     const h = this.byId[lane.headerId];
-    if (h) { h.status = "idle"; h.turns = lane.turns; h.ctx = fmtTokens(t.tokAcc) || ""; }
+    if (h) { h.status = "idle"; h.turns = lane.turns; const ctxTok = t.ctxNow || t.tokAcc; h.ctxTokens = ctxTok; h.ctx = fmtTokens(ctxTok) || ""; }
     this.running = false;
   }
 
@@ -430,7 +435,7 @@ export class GraphModel {
   stats() {
     let running = 0;
     for (const n of this.nodes) if ((n.type === "tool" || n.type === "agent") && n.status === "run") running++;
-    return { running, busy: this.running, turns: this.turnCount, done: !this.running, nodes: this.nodes.length };
+    return { running, busy: this.running, turns: this.turnCount, done: !this.running, nodes: this.nodes.length, cost: this.cost };
   }
 
   // ---- persistence (the live `turn` cursor is transient, not saved) -------
@@ -439,7 +444,7 @@ export class GraphModel {
       nodes: this.nodes, edges: this.edges, meta: this.meta, wtMap: this.wtMap,
       lanes: this.lanes, laneOrder: this.laneOrder,
       laneOffset: this.laneOffset, laneCompact: this.laneCompact,
-      turnCount: this.turnCount, subCount: this.subCount, seq: this.seq,
+      turnCount: this.turnCount, subCount: this.subCount, seq: this.seq, cost: this.cost,
     };
   }
   fromJSON(d) {
@@ -456,6 +461,7 @@ export class GraphModel {
     this.turnCount = d.turnCount || 0;
     this.subCount = d.subCount || 0;
     this.seq = d.seq || this.nodes.length;
+    this.cost = d.cost || 0;
     this.byId = {};
     for (const n of this.nodes) { this.byId[n.id] = n; n.h = undefined; } // re-measure on render
     this.turn = null;

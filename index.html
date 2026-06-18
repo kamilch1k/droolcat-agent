@@ -96,13 +96,22 @@
         <input class="pinput" id="prompt" placeholder="Message Claude — each turn continues this lane…"/>
         <button class="pbicon" id="pbmic" title="voice dictation"><span class="aw-ic" id="ic-mic"></span></button>
         <button class="pbtag" id="pbmode" title="permission mode — click to toggle">bypass</button>
-        <span class="pbtag muted" id="pbmodel" title="model">claude</span>
+        <div class="lanewrap" id="modelwrap">
+          <div class="lanemenu modelmenu" id="modelmenu"></div>
+          <button class="pbtag" id="pbmodel" title="model — click to choose">claude</button>
+        </div>
         <button class="sendbtn" id="send"><span class="aw-ic" id="ic-up"></span></button>
       </div>
     </div>
     <div class="inspector" id="inspector"><div class="inwrap" id="inwrap"></div></div>
   </div>
 </div></div>
+<div class="palette" id="palette" style="display:none">
+  <div class="palbox">
+    <input id="palinput" placeholder="Type a command or search chats…" autocomplete="off" spellcheck="false"/>
+    <div class="pallist" id="pallist"></div>
+  </div>
+</div>
 <script type="module" src="/src/main.js"></script>
 </body>
 </html>

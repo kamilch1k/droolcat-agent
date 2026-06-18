@@ -243,6 +243,24 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 button.pbtag:hover{background:var(--color-background-tertiary);color:var(--color-text-primary)}
 .pbtag.muted{color:var(--color-text-tertiary)}
 .pbtag.bypass{background:var(--color-background-warning);color:var(--color-text-warning);border-color:transparent}
+button.pbtag{cursor:pointer}
+.modelmenu{left:auto;right:0;min-width:150px}
+
+/* lane header context-usage gauge */
+.ctxbar{height:3px;border-radius:2px;background:var(--color-background-tertiary);margin-top:8px;overflow:hidden}
+.ctxfill{height:100%;background:var(--wt-api);border-radius:2px;transition:width .4s}
+
+/* command palette (Ctrl/Cmd-K) */
+.palette{position:fixed;inset:0;z-index:100;display:flex;align-items:flex-start;justify-content:center;background:rgba(20,19,17,.16);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px)}
+.palbox{margin-top:12vh;width:540px;max-width:92vw;background:var(--color-background-primary);border:0.5px solid var(--color-border-secondary);border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,.28);overflow:hidden}
+.palbox input{width:100%;border:none;border-bottom:0.5px solid var(--color-border-tertiary);padding:15px 18px;font-size:15px;font-family:var(--ui);outline:none;color:var(--color-text-primary);background:transparent}
+.palbox input::placeholder{color:var(--color-text-tertiary)}
+.pallist{max-height:48vh;overflow:auto;padding:6px}
+.palsec{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--color-text-tertiary);padding:9px 12px 3px}
+.palitem{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--color-text-primary)}
+.palitem .pi-l{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.palitem .pi-h{font-family:var(--font-mono);font-size:10px;color:var(--color-text-tertiary)}
+.palitem.sel{background:var(--color-background-secondary)}
 
 /* + popover: working folder + options */
 .plusmenu{min-width:248px;padding:8px}

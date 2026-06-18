@@ -119,7 +119,7 @@ const curChat = () => (cur >= 0 ? sessions[cur] : null);
 const chatById = (id) => sessions.find((s) => s.id === id);
 
 function newSession() {
-  const s = { id: newId(), title: "New chat", graph: new GraphModel(), cwd: "", edits: true, notes: [], activeLane: "main", laneClaudeId: {} };
+  const s = { id: newId(), title: "New chat", graph: new GraphModel(), cwd: "", edits: true, notes: [], activeLane: "main", laneClaudeId: {}, model: "" };
   sessions.push(s);
   switchSession(sessions.length - 1);
   scheduleSave();
@@ -327,7 +327,7 @@ async function sendPrompt(text) {
   try {
     await t.invoke("start_session", {
       sessionId: key, prompt: sendText, resume: s.laneClaudeId[lane] || null,
-      cwd: s.cwd || null, edits: !!s.edits,
+      cwd: s.cwd || null, edits: !!s.edits, model: s.model || null,
       appendSystem: lane === "board" ? BOARD_HELPER_SYSTEM : null,
     });
   } catch (err) {
@@ -624,8 +624,31 @@ function refreshLaneBar() {
   mode.textContent = bypass ? "bypass" : "ask";
   mode.classList.toggle("bypass", bypass);
   mode.title = bypass ? "bypass permissions — edits run without asking (click to require asking)" : "ask permissions (click to bypass)";
-  $("pbmodel").textContent = shortModel(s.graph.meta.model);
+  $("pbmodel").textContent = modelLabel(s);
   if (laneWrap() && laneWrap().classList.contains("open")) buildLaneMenu();
+}
+
+const MODELS = [
+  { id: "", label: "default" },
+  { id: "opus", label: "opus" },
+  { id: "sonnet", label: "sonnet" },
+  { id: "haiku", label: "haiku" },
+];
+function modelLabel(s) { return (s && s.model) ? s.model : shortModel(s && s.graph.meta.model); }
+const modelWrap = () => document.getElementById("modelwrap");
+function buildModelMenu() {
+  const s = curChat(); const wrap = $("modelmenu"); if (!wrap) return;
+  wrap.innerHTML = `<div class="mhead">Model</div>` + MODELS.map((m) =>
+    `<div class="lanemenuitem${s && (s.model || "") === m.id ? " active" : ""}" data-model="${m.id}"><span class="nm">${m.label}</span>${m.id === "" ? '<span class="sub">CLI default</span>' : ""}</div>`).join("");
+  wrap.querySelectorAll(".lanemenuitem[data-model]").forEach((it) =>
+    it.onclick = (e) => { e.stopPropagation(); selectModel(it.dataset.model); });
+}
+function toggleModelMenu() { const w = modelWrap(); if (!w) return; w.classList.toggle("open"); if (w.classList.contains("open")) buildModelMenu(); }
+function closeModelMenu() { const w = modelWrap(); if (w) w.classList.remove("open"); }
+function selectModel(id) {
+  const s = curChat(); if (!s) return;
+  s.model = id || "";
+  closeModelMenu(); refreshLaneBar(); scheduleSave();
 }
 function buildLaneMenu() {
   const s = curChat(); const wrap = $("lanemenu"); if (!s || !wrap) return;
@@ -789,6 +812,7 @@ function renderHud() {
     if (s) for (const n of s.graph.nodes) { if (n.type === "tool") tools++; if (n.type === "say") says++; if (n.type === "result") results++; }
     const st = s ? s.graph.stats() : null;
     const rows = [
+      ["session cost", st && st.cost ? "$" + st.cost.toFixed(3) : "$0.000"],
       ["chats", sessions.length],
       ["turns (chat)", st ? st.turns : 0],
       ["lanes", s ? s.graph.laneOrder.length : 0],
@@ -822,6 +846,66 @@ function updateSearchCount(n) {
   $("scount").textContent = !q ? "" : (n ? `${idx}/${n}` : "0/0");
 }
 
+// ---- command palette (Ctrl/Cmd-K) ----------------------------------------
+
+let palItems = [], palSel = 0;
+function paletteCommands() {
+  return [
+    { sec: "Actions", label: "New chat", run: () => newSession() },
+    { sec: "Actions", label: "New agent lane", run: () => newLane() },
+    { sec: "Actions", label: "Talk to the Board Helper", run: () => { if (!curChat()) newSession(); selectLane("board"); } },
+    { sec: "Actions", label: "Find on board", run: () => toggleSearch() },
+    { sec: "Actions", label: "Fit board to content", run: () => canvas.fit() },
+    { sec: "Actions", label: "Jump to latest", run: () => canvas.goLatest() },
+    { sec: "Actions", label: "Tidy the board (arrange)", run: () => canvas.arrange() },
+    { sec: "Actions", label: "Voice mode", run: () => voice.enter() },
+    { sec: "Actions", label: "Toggle logs / agents / stats", run: () => toggleHud() },
+    { sec: "Actions", label: "Code graph on the board", run: () => switchView("code") },
+    { sec: "Actions", label: "Back to agents view", run: () => switchView("agents") },
+    { sec: "Actions", label: "Refresh Claude Code sessions", run: () => loadCcSessions() },
+  ];
+}
+function buildPaletteItems(q) {
+  q = (q || "").toLowerCase().trim();
+  const chats = sessions.map((s, i) => ({ sec: "Chats", label: s.title || "chat", hint: s.observed ? "live" : (s.graph.turnCount + "t"), run: () => switchSession(i) }));
+  let all = [...paletteCommands(), ...chats];
+  if (q) all = all.filter((it) => it.label.toLowerCase().includes(q));
+  return all.slice(0, 40);
+}
+function openPalette() {
+  $("palette").style.display = "flex";
+  $("palinput").value = "";
+  renderPalette("");
+  setTimeout(() => $("palinput").focus(), 0);
+}
+function closePalette() { $("palette").style.display = "none"; }
+function renderPalette(q) {
+  palItems = buildPaletteItems(q);
+  palSel = 0;
+  const host = $("pallist"); host.innerHTML = "";
+  let lastSec = "";
+  palItems.forEach((it, i) => {
+    if (it.sec !== lastSec) { lastSec = it.sec; const sc = document.createElement("div"); sc.className = "palsec"; sc.textContent = it.sec; host.appendChild(sc); }
+    const d = document.createElement("div");
+    d.className = "palitem" + (i === palSel ? " sel" : "");
+    d.dataset.i = i;
+    d.innerHTML = `<span class="pi-l">${escapeHtml(it.label)}</span>${it.hint ? `<span class="pi-h">${escapeHtml(it.hint)}</span>` : ""}`;
+    d.onmousedown = (e) => { e.preventDefault(); runPalette(i); };
+    host.appendChild(d);
+  });
+}
+function movePalette(d) {
+  if (!palItems.length) return;
+  palSel = (palSel + d + palItems.length) % palItems.length;
+  [...$("pallist").querySelectorAll(".palitem")].forEach((el) => el.classList.toggle("sel", +el.dataset.i === palSel));
+  const sel = $("pallist").querySelector(".palitem.sel"); if (sel) sel.scrollIntoView({ block: "nearest" });
+}
+function runPalette(i) {
+  const it = palItems[i]; if (!it) return;
+  closePalette();
+  try { it.run(); } catch (e) { console.warn("palette action failed", e); }
+}
+
 // ---- local persistence (saved like Claude Code sessions) ----------------
 
 const STORE = "droolcat.sessions.v1";
@@ -832,7 +916,7 @@ function saveSessions() {
     const data = {
       cur,
       sessions: sessions.map((s) => ({
-        id: s.id, title: s.title, cwd: s.cwd, edits: s.edits, activeLane: s.activeLane,
+        id: s.id, title: s.title, cwd: s.cwd, edits: s.edits, activeLane: s.activeLane, model: s.model || "",
         laneClaudeId: s.laneClaudeId, notes: s.notes, observed: s.observed || null, graph: s.graph.toJSON(),
       })),
     };
@@ -849,7 +933,7 @@ function loadSessions() {
       id: s.id, title: s.title || "chat", cwd: s.cwd || "", edits: s.edits !== false,
       activeLane: s.activeLane || "main", laneClaudeId: s.laneClaudeId || {},
       notes: Array.isArray(s.notes) ? s.notes : [], observed: s.observed || null,
-      graph: new GraphModel().fromJSON(s.graph),
+      model: s.model || "", graph: new GraphModel().fromJSON(s.graph),
     }));
     cur = Math.min(Math.max(0, d.cur || 0), sessions.length - 1);
     return true;
@@ -881,13 +965,27 @@ $("plusnewlane").onclick = (e) => { e.stopPropagation(); closePlusMenu(); newLan
 $("pbmic").onclick = () => voice.enter();
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && voice.active) voice.exit(); });
 $("pbmode").onclick = () => { const s = curChat(); if (!s) return; s.edits = !s.edits; $("allowedits").checked = s.edits; refreshLaneBar(); scheduleSave(); };
+$("pbmodel").onclick = (e) => { e.stopPropagation(); closeLaneMenu(); closePlusMenu(); toggleModelMenu(); };
 $("panelbtn").onclick = () => toggleHud();
 $("hudclose").onclick = () => toggleHud();
 document.querySelectorAll("#hudtabs button[data-tab]").forEach((b) => b.onclick = () => setHudTab(b.dataset.tab));
 document.addEventListener("click", (e) => {
   const lw = laneWrap(); if (lw && lw.classList.contains("open") && !lw.contains(e.target)) closeLaneMenu();
   const pw = plusWrap(); if (pw && pw.classList.contains("open") && !pw.contains(e.target)) closePlusMenu();
+  const mw = modelWrap(); if (mw && mw.classList.contains("open") && !mw.contains(e.target)) closeModelMenu();
 });
+// command palette
+window.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); $("palette").style.display === "none" ? openPalette() : closePalette(); }
+  else if (e.key === "Escape" && $("palette").style.display !== "none") closePalette();
+});
+$("palinput").addEventListener("input", () => renderPalette($("palinput").value));
+$("palinput").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { e.preventDefault(); movePalette(1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); movePalette(-1); }
+  else if (e.key === "Enter") { e.preventDefault(); runPalette(palSel); }
+});
+$("palette").addEventListener("mousedown", (e) => { if (e.target.id === "palette") closePalette(); });
 $("stopbtn").onclick = stopTurn;
 $("zin").onclick = () => { autoFit = false; canvas.zoom(1.15); };
 $("zout").onclick = () => { autoFit = false; canvas.zoom(1 / 1.15); };

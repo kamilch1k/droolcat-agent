@@ -98,7 +98,7 @@ export class Canvas {
       // compact must be applied BEFORE we measure heights, so the layout reflows
       const compact = compactOf(n);
       if (el._compact !== compact) { el.classList.toggle("compact", compact); el._compact = compact; }
-      const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.text || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.resultChip || ""}|${n.summary ? n.summary.length : 0}|${n.meta || ""}|${n.model || ""}|${n.mode || ""}|${n.ctx || ""}|${n.turns || 0}|${n.expanded ? 1 : 0}|${n.collapsed ? 1 : 0}|${this.searchHits && this.searchHits.includes(n.id) ? 1 : 0}`;
+      const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.text || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.resultChip || ""}|${n.summary ? n.summary.length : 0}|${n.meta || ""}|${n.model || ""}|${n.mode || ""}|${n.ctx || ""}|${n.ctxTokens || 0}|${n.turns || 0}|${n.expanded ? 1 : 0}|${n.collapsed ? 1 : 0}|${this.searchHits && this.searchHits.includes(n.id) ? 1 : 0}`;
       if (el._sig !== sig) {
         el.innerHTML = this._card(n);
         el._sig = sig;
@@ -251,10 +251,13 @@ export class Canvas {
           ? `<span class="aw-pill p-info">running…</span>`
           : `<span class="aw-pill p-success">${n.turns || 0} turn${(n.turns || 0) === 1 ? "" : "s"}</span>`;
       const ctx = n.ctx ? `<span class="lane-ctx">${esc(n.ctx)} ctx</span>` : "";
+      const pct = n.ctxTokens ? Math.min(100, n.ctxTokens / 2000) : 0;
+      const gauge = n.ctxTokens ? `<div class="ctxbar" title="context ${esc(n.ctx)} / 200k"><div class="ctxfill" style="width:${pct.toFixed(0)}%"></div></div>` : "";
       return `<div class="lane-head"><span class="sw" style="background:${this._wtColor(n.wt)}"></span>
         <span class="lbl">${esc(n.title || "Agent lane")}</span>
         <button class="lane-compact" title="compact this lane">${I.compact}</button></div>
         <div class="lane-meta"><span class="lane-model">${esc(n.model || "claude")}</span><span class="aw-pill ${modeK}">${modeL}</span>${ctx}</div>
+        ${gauge}
         <div class="lane-status">${st}</div>`;
     }
     if (n.type === "prompt")
