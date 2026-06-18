@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "app": "tauri dev",
-    "app:build": "tauri build"
+    "app:build": "tauri build",
+    "shortcut": "tauri build --debug --no-bundle && powershell -ExecutionPolicy Bypass -File scripts/install-app.ps1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
