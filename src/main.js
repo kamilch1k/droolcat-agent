@@ -23,6 +23,7 @@ $("ic-newlane").innerHTML = I.plus;
 $("ic-newlane2").innerHTML = I.plus;
 $("ic-mic").innerHTML = I.mic;
 $("ic-follow").innerHTML = I.follow;
+$("ic-cpsend").innerHTML = I.up;
 
 const canvas = new Canvas(
   {
@@ -891,13 +892,23 @@ function toggleChatPanel() {
   panelOpen = !panelOpen;
   $("chatpanel").classList.toggle("open", panelOpen);
   $("chatbtn").classList.toggle("active", panelOpen);
-  if (panelOpen) renderPanel();
+  if (panelOpen) { renderPanel(); updatePanelPrompt(); }
 }
 function setPanelTab(tab) {
   panelTab = tab;
   document.querySelectorAll("#cptabs button[data-cp]").forEach((b) => b.classList.toggle("active", b.dataset.cp === tab));
   const cb = $("chatbody"); if (cb) cb._sig = null;   // force a rebuild when switching tabs
   renderPanel();
+  updatePanelPrompt();
+}
+// the in-panel composer shows only on the conversation tab (not git)
+function updatePanelPrompt() { const p = $("cpprompt"); if (p) p.style.display = panelTab === "chat" ? "flex" : "none"; }
+// send a message from inside the conversation panel — same path as the main bar
+function cpSend() {
+  const inp = $("cppromptinput"); const v = (inp.value || "").trim();
+  if (!v) return;
+  inp.value = "";
+  sendPrompt(v);
 }
 function renderPanel() { if (!panelOpen) return; if (panelTab === "git") renderGitTree(); else renderConversation(); }
 function renderConversation() {
@@ -943,8 +954,13 @@ function renderConversation() {
     el.addEventListener("click", (e) => { e.stopPropagation(); if (canvas.model === s.graph) canvas.zoomToNode(el.dataset.go); }));
   host.scrollTop = nearBottom ? host.scrollHeight : prevTop;  // keep your place if you scrolled up
 }
-// Claude Code shows tool names capitalized (Read, Edit, Bash…)
-const ccCap = (t) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
+// Claude Code shows tool names capitalized (Read, Edit, Bash…); collapse the
+// noisy mcp__server__tool form down to just the tool segment
+function ccCap(t) {
+  t = String(t || "");
+  if (t.includes("__")) t = t.split("__").filter(Boolean).pop();
+  return t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+}
 // colored status dot for a tool/agent line — green done, red error, amber running
 function ccBulletClass(n) {
   if (n.donePill && n.donePill.k === "danger") return "err";
@@ -1171,6 +1187,8 @@ $("panelbtn").onclick = () => toggleHud();
 $("chatbtn").onclick = () => toggleChatPanel();
 $("chatclose").onclick = () => toggleChatPanel();
 document.querySelectorAll("#cptabs button[data-cp]").forEach((b) => b.onclick = () => setPanelTab(b.dataset.cp));
+$("cpsend").onclick = () => cpSend();
+$("cppromptinput").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); cpSend(); } });
 $("hudclose").onclick = () => toggleHud();
 document.querySelectorAll("#hudtabs button[data-tab]").forEach((b) => b.onclick = () => setHudTab(b.dataset.tab));
 document.addEventListener("click", (e) => {

@@ -78,36 +78,47 @@
         </div>
       </div>
       <div class="promptbar">
-        <div class="lanewrap" id="lanewrap">
-          <div class="lanemenu" id="lanemenu"></div>
-          <button class="lanebtn" id="lanebtn">
-            <span class="sw" id="laneSw" style="background:var(--wt-main)"></span>
-            <span class="lanenm" id="lanename">main</span>
-            <span class="lanechev">▴</span>
-          </button>
-        </div>
-        <div class="lanewrap" id="pluswrap">
-          <div class="lanemenu plusmenu" id="plusmenu">
-            <div class="mhead">Working folder</div>
-            <input class="cbinput" id="folder" placeholder="(home) — project folder to work in…"/>
-            <label class="cbtoggle"><input type="checkbox" id="allowedits" checked/> allow edits (bypass permissions)</label>
-            <div class="lanemenuitem add" id="plusnewlane"><span class="aw-ic" id="ic-newlane2"></span>New agent lane</div>
+        <div class="pb-box">
+          <div class="pb-inputrow">
+            <input class="pinput" id="prompt" placeholder="Message Claude — each turn continues this lane…"/>
+            <button class="sendbtn" id="send"><span class="aw-ic" id="ic-up"></span></button>
           </div>
-          <button class="pbicon" id="pbnew" title="folder &amp; options"><span class="aw-ic" id="ic-newlane"></span></button>
+          <div class="pb-toolbar">
+            <div class="lanewrap" id="lanewrap">
+              <div class="lanemenu" id="lanemenu"></div>
+              <button class="lanebtn" id="lanebtn">
+                <span class="sw" id="laneSw" style="background:var(--wt-main)"></span>
+                <span class="lanenm" id="lanename">main</span>
+                <span class="lanechev">▴</span>
+              </button>
+            </div>
+            <button class="pbtag" id="pbmode" title="permission mode — click to toggle">bypass</button>
+            <div class="lanewrap" id="pluswrap">
+              <div class="lanemenu plusmenu" id="plusmenu">
+                <div class="mhead">Working folder</div>
+                <input class="cbinput" id="folder" placeholder="(home) — project folder to work in…"/>
+                <label class="cbtoggle"><input type="checkbox" id="allowedits" checked/> allow edits (bypass permissions)</label>
+                <div class="lanemenuitem add" id="plusnewlane"><span class="aw-ic" id="ic-newlane2"></span>New agent lane</div>
+              </div>
+              <button class="pbicon pb-ghost" id="pbnew" title="folder &amp; options"><span class="aw-ic" id="ic-newlane"></span></button>
+            </div>
+            <button class="pbicon pb-ghost" id="pbmic" title="voice dictation"><span class="aw-ic" id="ic-mic"></span></button>
+            <span class="pb-spacer"></span>
+            <div class="lanewrap" id="modelwrap">
+              <div class="lanemenu modelmenu" id="modelmenu"></div>
+              <button class="pbtag pb-model" id="pbmodel" title="model — click to choose">claude</button>
+            </div>
+          </div>
         </div>
-        <input class="pinput" id="prompt" placeholder="Message Claude — each turn continues this lane…"/>
-        <button class="pbicon" id="pbmic" title="voice dictation"><span class="aw-ic" id="ic-mic"></span></button>
-        <button class="pbtag" id="pbmode" title="permission mode — click to toggle">bypass</button>
-        <div class="lanewrap" id="modelwrap">
-          <div class="lanemenu modelmenu" id="modelmenu"></div>
-          <button class="pbtag" id="pbmodel" title="model — click to choose">claude</button>
-        </div>
-        <button class="sendbtn" id="send"><span class="aw-ic" id="ic-up"></span></button>
       </div>
     </div>
     <div class="chatpanel" id="chatpanel">
       <div class="cp-head"><span class="cp-tabs" id="cptabs"><button data-cp="chat" class="active">conversation</button><button data-cp="git">git</button></span><button class="cp-x" id="chatclose">×</button></div>
       <div class="chatbody" id="chatbody"></div>
+      <div class="cp-prompt" id="cpprompt">
+        <input id="cppromptinput" placeholder="Reply to this chat…"/>
+        <button id="cpsend" title="send"><span class="aw-ic" id="ic-cpsend"></span></button>
+      </div>
     </div>
     <div class="inspector" id="inspector"><div class="inwrap" id="inwrap"></div></div>
   </div>
