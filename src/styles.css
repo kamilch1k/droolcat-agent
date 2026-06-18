@@ -188,6 +188,39 @@ button.pbtag:hover{background:var(--color-background-tertiary);color:var(--color
 .pbtag.muted{color:var(--color-text-tertiary)}
 .pbtag.bypass{background:var(--color-background-warning);color:var(--color-text-warning);border-color:transparent}
 
+/* + popover: working folder + options */
+.plusmenu{min-width:248px;padding:8px}
+.plusmenu .cbinput{width:100%;margin:2px 0 8px}
+.plusmenu .cbtoggle{display:flex;align-items:center;gap:6px;font-size:12px;padding:2px 2px 6px}
+
+/* Logs / Agents / Stats dock */
+.hudpanel{position:absolute;left:12px;bottom:12px;z-index:30;width:300px;max-height:54%;display:flex;flex-direction:column;background:var(--color-background-primary);border:0.5px solid var(--color-border-secondary);border-radius:var(--radius-lg);box-shadow:0 10px 30px rgba(0,0,0,.16);overflow:hidden}
+.hudtabs{display:flex;align-items:center;gap:2px;padding:6px 6px;border-bottom:0.5px solid var(--color-border-tertiary)}
+.hudtabs button{background:none;border:none;font-size:11.5px;color:var(--color-text-secondary);padding:5px 9px;border-radius:6px}
+.hudtabs button:hover{background:var(--color-background-secondary)}
+.hudtabs button.active{background:var(--color-background-secondary);color:var(--color-text-primary);font-weight:500}
+.hudtabs .hudclose{color:var(--color-text-tertiary);font-size:15px;padding:2px 7px}
+.hudbody{overflow:auto;padding:9px 11px;font-size:12px}
+.hudlog{font-family:var(--font-mono);font-size:10.5px;line-height:1.7;color:var(--color-text-secondary);white-space:pre-wrap;word-break:break-word}
+.hudlog .t{color:var(--color-text-tertiary)}
+.hudlog .err{color:var(--color-text-danger)}
+.hudlog .ok{color:var(--color-text-success)}
+.hudrow{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:0.5px solid var(--color-border-tertiary)}
+.hudrow:last-child{border-bottom:none}
+.hudrow .sw{width:9px;height:9px;border-radius:3px;flex:none}
+.hudrow .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hudrow .sub{font-family:var(--font-mono);font-size:10px;color:var(--color-text-tertiary)}
+.hudstat{display:flex;justify-content:space-between;padding:6px 0;border-bottom:0.5px solid var(--color-border-tertiary);font-size:12px}
+.hudstat:last-child{border-bottom:none}
+.hudstat .k{color:var(--color-text-secondary)}
+.hudstat .v{font-family:var(--font-mono);color:var(--color-text-primary)}
+
+/* code cluster rendered on the same board (a region, not a separate view) */
+.clusterlabel{position:absolute;font-size:11px;font-weight:600;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.6px;background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:6px;padding:4px 9px;pointer-events:none}
+
+/* board-helper lane: a distinct accent so the organizer reads differently */
+.t-lane.helper{background:linear-gradient(180deg,#fbf6ec,#f4ead4);border-color:#e3cf9f}
+
 /* lane header card (also the "waiting for input" node + drag handle) */
 .t-lane{background:linear-gradient(180deg,var(--color-background-primary),var(--color-background-secondary));border:0.5px solid var(--color-border-secondary);border-radius:var(--radius-lg);box-shadow:0 1px 3px rgba(0,0,0,.05);cursor:grab}
 .t-lane:hover{border-color:var(--color-border-secondary)}

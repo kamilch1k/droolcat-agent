@@ -30,6 +30,7 @@
         </div>
         <button class="replay" id="stopbtn" style="display:none;color:var(--color-text-danger)">stop</button>
         <button class="replay" id="replay"><span class="aw-ic" id="ic-play"></span>replay</button>
+        <button class="replay" id="panelbtn" title="logs / agents / stats">panels</button>
         <div class="zc"><button id="zout">−</button><span class="zl" id="zl">100%</span><button id="zin">+</button><button id="fit">fit</button></div>
       </div>
       <div class="viewport" id="viewport"><div class="world" id="world"><svg class="edges" id="edges"></svg></div>
@@ -40,14 +41,19 @@
             <div class="emptyp">Type a prompt below to start a live <code>claude -p</code> session, or switch to <b>sample</b> to replay a captured transcript.</div>
           </div>
         </div>
-      </div>
-      <div class="chatbar">
-        <span class="cblabel">folder</span>
-        <input class="cbinput" id="folder" placeholder="(home) — paste a project folder path to work in…"/>
-        <label class="cbtoggle"><input type="checkbox" id="allowedits" checked/> allow edits</label>
+        <div class="hudpanel" id="hud" style="display:none">
+          <div class="hudtabs" id="hudtabs">
+            <button data-tab="logs" class="active">logs</button>
+            <button data-tab="agents">agents</button>
+            <button data-tab="stats">stats</button>
+            <span style="flex:1"></span>
+            <button class="hudclose" id="hudclose">×</button>
+          </div>
+          <div class="hudbody" id="hudbody"></div>
+        </div>
       </div>
       <div class="promptbar">
-        <div class="lanewrap">
+        <div class="lanewrap" id="lanewrap">
           <div class="lanemenu" id="lanemenu"></div>
           <button class="lanebtn" id="lanebtn">
             <span class="sw" id="laneSw" style="background:var(--wt-main)"></span>
@@ -55,7 +61,15 @@
             <span class="lanechev">▴</span>
           </button>
         </div>
-        <button class="pbicon" id="pbnew" title="new agent lane"><span class="aw-ic" id="ic-newlane"></span></button>
+        <div class="lanewrap" id="pluswrap">
+          <div class="lanemenu plusmenu" id="plusmenu">
+            <div class="mhead">Working folder</div>
+            <input class="cbinput" id="folder" placeholder="(home) — project folder to work in…"/>
+            <label class="cbtoggle"><input type="checkbox" id="allowedits" checked/> allow edits (bypass permissions)</label>
+            <div class="lanemenuitem add" id="plusnewlane"><span class="aw-ic" id="ic-newlane2"></span>New agent lane</div>
+          </div>
+          <button class="pbicon" id="pbnew" title="folder &amp; options"><span class="aw-ic" id="ic-newlane"></span></button>
+        </div>
         <input class="pinput" id="prompt" placeholder="Message Claude — each turn continues this lane…"/>
         <button class="pbicon" id="pbmic" title="voice dictation"><span class="aw-ic" id="ic-mic"></span></button>
         <button class="pbtag" id="pbmode" title="permission mode — click to toggle">bypass</button>

@@ -18,6 +18,7 @@ $("ic-up").innerHTML = I.up;
 $("ic-play").innerHTML = I.play;
 $("ic-empty").innerHTML = I.graph;
 $("ic-newlane").innerHTML = I.plus;
+$("ic-newlane2").innerHTML = I.plus;
 $("ic-mic").innerHTML = I.mic;
 
 const canvas = new Canvas(
@@ -53,6 +54,21 @@ let fitPending = false;   // do a full fit on the next sync (turn start / switch
 let homePending = false;  // anchor a brand-new conversation at the top (no bounce)
 let syncQueued = false;
 let lastErr = "";         // last stderr line — shown if a turn ends with no result
+let runQueue = [];        // Board-Helper-spawned lane runs, executed one at a time
+let logs = [];            // rolling activity log for the HUD panel
+let hudOpen = false, hudTab = "logs";
+
+// The Board Helper is a built-in organizer agent. It talks in its own lane and
+// can act on the board by ending a reply with a ```board JSON action block.
+const BOARD_HELPER_SYSTEM =
+  "You are the Board Helper for Droolcat, a visual board where Claude Code conversations run as lanes of nodes. " +
+  "The user talks to you to ORGANIZE and DELEGATE work across the board. Reply briefly and conversationally. " +
+  "When work should be delegated, act on the board by ENDING your reply with a single fenced code block tagged `board` " +
+  "containing a JSON array of actions. Supported actions: " +
+  '{"action":"spawnLane","title":"short label","prompt":"the first prompt to run in that new lane"} — start a new agent lane and run a prompt in it; ' +
+  '{"action":"note","text":"..."} — pin a sticky note; ' +
+  '{"action":"compact","lane":"main"} — collapse a lane. ' +
+  "Only include the board block when actions are warranted, and put nothing after it. Keep each spawned prompt self-contained.";
 
 const newId = () => "chat-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
 const curChat = () => (cur >= 0 ? sessions[cur] : null);
@@ -79,7 +95,9 @@ function switchSession(i) {
   $("allowedits").checked = sessions[i].edits !== false;
   autoFit = true;
   closeLaneMenu();
+  closePlusMenu();
   refreshLaneBar();
+  if (hudOpen) renderHud();
   renderSessions();
   canvas.sync();
   canvas.fit();
@@ -157,23 +175,35 @@ function handleEvent(evt) {
   if (!s) return;
   if (evt.type === "system" && evt.session_id) s.laneClaudeId[runningLane] = evt.session_id; // per-lane --resume
   s.graph.apply(evt);
+  logEvent(s, evt);
   bump(s.graph);
+  scheduleSave();   // persist the conversation as it streams (debounced), not just at turn end
 }
 
 function endTurn(ok) {
   const s = (runningChat && chatById(runningChat)) || curChat();
+  const wasLane = runningLane;
   if (s) {
     s.graph.endTurn(ok, ok ? "" : lastErr);
     // if a resumed turn failed, drop the stale session id so the next prompt
     // starts a fresh Claude session instead of failing again
     if (!ok && /resume|conversation|no session|session id/i.test(lastErr)) s.laneClaudeId[runningLane] = null;
+    logs.push({ t: nowClock(), kind: ok ? "ok" : "err", text: ok ? `✓ ${laneLabel(s, wasLane)} done` : `✗ ${laneLabel(s, wasLane)} — ${clip(lastErr || "ended", 48)}` });
     bump(s.graph);
   }
   runningId = null; runningChat = null;
   $("stopbtn").style.display = "none";
   setConn(tauri ? "live" : "", tauri ? "ready" : "browser (sample only)");
   refreshLaneBar();
+  if (hudOpen) renderHud();
+  // Board Helper finished -> execute any board actions it proposed
+  if (ok && s && wasLane === "board") {
+    const lane = s.graph.lanes["board"];
+    const res = lane && s.graph.byId[lane.lastResultId];
+    if (res && res.summary) runBoardActions(parseBoardBlock(res.summary), s);
+  }
   scheduleSave();
+  pump();   // run the next queued lane, if any
 }
 
 function bump(graph) {
@@ -231,8 +261,13 @@ async function sendPrompt(text) {
   lastErr = "";
   $("stopbtn").style.display = "";
   setConn("run", "working…");
+  logs.push({ t: nowClock(), kind: "sys", text: `▶ turn in ${laneLabel(s, lane)} — ${clip(text, 48)}` });
   try {
-    await t.invoke("start_session", { sessionId: key, prompt: text, resume: s.laneClaudeId[lane] || null, cwd: s.cwd || null, edits: !!s.edits });
+    await t.invoke("start_session", {
+      sessionId: key, prompt: text, resume: s.laneClaudeId[lane] || null,
+      cwd: s.cwd || null, edits: !!s.edits,
+      appendSystem: lane === "board" ? BOARD_HELPER_SYSTEM : null,
+    });
   } catch (err) {
     setConn("err", String(err));
     s.graph.endTurn(false, "Couldn't start the turn — " + String(err));
@@ -288,18 +323,21 @@ function setView(v) {
 async function switchView(v) {
   const requested = v;
   setView(v);
+  // the conversation stays the canvas model; the code graph lives ON the board
+  // as a cluster to the right. The tab just focuses one region or the other.
   if (v === "code") {
+    setConn("run", "scanning repo…");
     await loadCodeGraph();
     if (view !== requested) return;
     codeModel.setTouched(touchedFiles());
-    canvas.setModel(codeModel);
+    canvas.setAux(codeModel);     // render/refresh the code cluster on the board
+    setConn(tauri ? "live" : "", tauri ? "ready" : "browser (sample only)");
+    autoFit = false;
+    canvas.focusAux();            // pan to the code region
   } else {
-    canvas.setModel(curChat() ? curChat().graph : new GraphModel());
+    autoFit = false;
+    canvas.fit();                 // back to the conversation (code stays on board)
   }
-  canvas.selWt = null;
-  canvas.deselect();
-  canvas.sync();
-  canvas.fit();
 }
 async function loadCodeGraph() {
   if (codeLoaded) return;
@@ -366,13 +404,16 @@ function setConn(cls, label) {
 
 // ---- prompt-bar lane controls (drop-up selector + mode/model/mic) --------
 
-const laneWrap = () => document.querySelector(".lanewrap");
+const laneWrap = () => document.getElementById("lanewrap");
+const plusWrap = () => document.getElementById("pluswrap");
 function laneLabel(s, laneId) {
   if (laneId === "main") return "main";
+  if (laneId === "board") return "Board Helper";
   const wt = s.graph.wtMap && s.graph.wtMap[laneId];
   return (wt && wt.name) || laneId;
 }
 function laneColor(s, laneId) {
+  if (laneId === "board") return "#b5791b";
   const wt = s.graph.wtMap && s.graph.wtMap[laneId];
   return (wt && wt.color) || "var(--wt-main)";
 }
@@ -400,11 +441,16 @@ function refreshLaneBar() {
 }
 function buildLaneMenu() {
   const s = curChat(); const wrap = $("lanemenu"); if (!s || !wrap) return;
-  const lanes = []; const seen = new Set();
+  const lanes = []; const seen = new Set(["board"]); // board listed separately under "Agent"
   for (const id of ["main", ...s.graph.laneOrder, s.activeLane]) {
     if (!id || seen.has(id)) continue; seen.add(id); lanes.push(id);
   }
-  let h = `<div class="mhead">Lanes</div>`;
+  const boardActive = s.activeLane === "board";
+  let h = `<div class="mhead">Agent</div>
+    <div class="lanemenuitem${boardActive ? " active" : ""}" data-lane="board">
+      <span class="sw" style="background:#b5791b"></span>
+      <span class="nm">Board Helper</span><span class="sub">${boardActive ? "active" : "organizer"}</span></div>
+    <div class="mhead">Lanes</div>`;
   for (const id of lanes) {
     const lane = s.graph.lanes[id];
     const turns = lane ? lane.turns : 0;
@@ -426,6 +472,7 @@ function toggleLaneMenu() {
   if (w.classList.contains("open")) buildLaneMenu();
 }
 function closeLaneMenu() { const w = laneWrap(); if (w) w.classList.remove("open"); }
+function closePlusMenu() { const w = plusWrap(); if (w) w.classList.remove("open"); }
 
 // voice dictation via the WebView's Web Speech API (graceful no-op if absent)
 let recog = null, recording = false;
@@ -444,6 +491,118 @@ function toggleMic() {
     recog.onerror = () => { recording = false; $("pbmic").classList.remove("on"); setConn("", "voice input error"); };
     recog.start(); recording = true; $("pbmic").classList.add("on"); setConn("run", "listening…");
   } catch { setConn("", "voice input isn't available in this build"); }
+}
+
+// ---- Board Helper: parse + execute the organizer's board actions ---------
+
+function nowClock() { const d = new Date(); return d.toTimeString().slice(0, 8); }
+
+// pull a fenced ```board (or ```json) block out of the helper's reply
+function parseBoardBlock(text) {
+  const m = /```(?:board|json)\s*([\s\S]*?)```/i.exec(String(text || ""));
+  if (!m) return [];
+  try { const v = JSON.parse(m[1].trim()); return Array.isArray(v) ? v : (v && Array.isArray(v.actions) ? v.actions : []); }
+  catch { return []; }
+}
+
+function runBoardActions(actions, s) {
+  if (!Array.isArray(actions) || !actions.length || !s) return;
+  let noteX = 60, noteY = 60;
+  for (const a of actions) {
+    if (!a || typeof a !== "object") continue;
+    if (a.action === "spawnLane" && a.prompt) {
+      const laneId = "lane" + (s.graph.laneOrder.length + 1) + "-" + Math.random().toString(36).slice(2, 5);
+      s.graph.beginLane(laneId, { model: s.graph.meta.model || "claude", mode: s.edits ? "bypass" : "ask" });
+      if (s.graph.wtMap[laneId] && a.title) s.graph.wtMap[laneId].name = clip(a.title, 18);
+      runQueue.push({ chatId: s.id, lane: laneId, prompt: String(a.prompt) });
+      logs.push({ t: nowClock(), kind: "sys", text: `＋ Board Helper spawned ${clip(a.title || laneId, 24)}` });
+    } else if (a.action === "note" && a.text) {
+      const note = { id: "note" + Date.now().toString(36) + Math.random().toString(36).slice(2, 4), x: noteX, y: noteY, w: 190, text: String(a.text), color: "#fef6c7", pinned: true };
+      s.notes.push(note); noteY += 92;
+    } else if (a.action === "compact" && a.lane && s.graph.lanes[a.lane]) {
+      s.graph.laneCompact[a.lane] = true;
+    }
+  }
+  if (canvas.model === s.graph) { canvas.setNotes(s.notes); canvas.sync(); }
+  refreshLaneBar();
+  scheduleSave();
+}
+
+// run the next Board-Helper-spawned lane (one turn at a time)
+function pump() {
+  if (runningId || !runQueue.length) return;
+  const job = runQueue[0];
+  const s = curChat();
+  if (!s || s.id !== job.chatId) return;   // wait until that chat is active again
+  runQueue.shift();
+  s.activeLane = job.lane;
+  refreshLaneBar();
+  sendPrompt(job.prompt);
+}
+
+// ---- Logs / Agents / Stats HUD -------------------------------------------
+
+function logEvent(s, evt) {
+  if (!evt) return;
+  if (evt.type === "assistant") {
+    for (const b of (evt.message?.content || [])) {
+      if (b.type === "tool_use") logs.push({ t: nowClock(), kind: "tool", text: `${b.name}` });
+    }
+  } else if (evt.type === "result") {
+    logs.push({ t: nowClock(), kind: evt.is_error ? "err" : "ok", text: `result · ${evt.num_turns || "?"} steps` });
+  }
+  if (logs.length > 500) logs = logs.slice(-400);
+  if (hudOpen && hudTab === "logs") renderHud();
+}
+
+function toggleHud() {
+  hudOpen = !hudOpen;
+  $("hud").style.display = hudOpen ? "flex" : "none";
+  $("panelbtn").classList.toggle("active", hudOpen);
+  if (hudOpen) renderHud();
+}
+function setHudTab(tab) {
+  hudTab = tab;
+  document.querySelectorAll("#hudtabs button[data-tab]").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  renderHud();
+}
+function renderHud() {
+  const body = $("hudbody"); if (!body) return;
+  const s = curChat();
+  if (hudTab === "logs") {
+    body.innerHTML = `<div class="hudlog">${logs.slice(-200).map((l) =>
+      `<div><span class="t">${l.t}</span> <span class="${l.kind === "err" ? "err" : l.kind === "ok" ? "ok" : ""}">${escapeHtml(l.text)}</span></div>`).join("") || "no activity yet"}</div>`;
+    body.scrollTop = body.scrollHeight;
+  } else if (hudTab === "agents") {
+    let h = "";
+    if (s) {
+      for (const id of s.graph.laneOrder) {
+        const lane = s.graph.lanes[id], wt = s.graph.wtMap[id];
+        h += `<div class="hudrow"><span class="sw" style="background:${(wt && wt.color) || "var(--wt-main)"}"></span><span class="nm">${escapeHtml(laneLabel(s, id))}</span><span class="sub">${lane.turns} turn${lane.turns === 1 ? "" : "s"}</span></div>`;
+      }
+      for (const n of s.graph.nodes) if (n.type === "agent") {
+        const wt = s.graph.wtMap[n.wt];
+        h += `<div class="hudrow"><span class="sw" style="background:${(wt && wt.color) || "var(--wt-main)"}"></span><span class="nm">${escapeHtml(n.title)}</span><span class="sub">${n.status}</span></div>`;
+      }
+    }
+    body.innerHTML = h || "no lanes yet";
+  } else {
+    let tools = 0, says = 0, results = 0;
+    if (s) for (const n of s.graph.nodes) { if (n.type === "tool") tools++; if (n.type === "say") says++; if (n.type === "result") results++; }
+    const st = s ? s.graph.stats() : null;
+    const rows = [
+      ["chats", sessions.length],
+      ["turns (chat)", st ? st.turns : 0],
+      ["lanes", s ? s.graph.laneOrder.length : 0],
+      ["nodes", st ? st.nodes : 0],
+      ["tool calls", tools],
+      ["replies", says],
+      ["results", results],
+      ["queued runs", runQueue.length],
+      ["running", st && st.busy ? "yes" : "no"],
+    ];
+    body.innerHTML = rows.map(([k, v]) => `<div class="hudstat"><span class="k">${escapeHtml(k)}</span><span class="v">${v}</span></div>`).join("");
+  }
 }
 
 // ---- local persistence (saved like Claude Code sessions) ----------------
@@ -497,11 +656,18 @@ function fireSend() {
 $("newsession").onclick = () => newSession();
 $("folder").addEventListener("change", () => { const s = curChat(); if (s) { s.cwd = $("folder").value.trim(); scheduleSave(); } });
 $("allowedits").addEventListener("change", () => { const s = curChat(); if (s) { s.edits = $("allowedits").checked; refreshLaneBar(); scheduleSave(); } });
-$("lanebtn").onclick = (e) => { e.stopPropagation(); toggleLaneMenu(); };
-$("pbnew").onclick = () => newLane();
+$("lanebtn").onclick = (e) => { e.stopPropagation(); closePlusMenu(); toggleLaneMenu(); };
+$("pbnew").onclick = (e) => { e.stopPropagation(); closeLaneMenu(); const w = plusWrap(); if (w) w.classList.toggle("open"); };
+$("plusnewlane").onclick = (e) => { e.stopPropagation(); closePlusMenu(); newLane(); };
 $("pbmic").onclick = () => toggleMic();
 $("pbmode").onclick = () => { const s = curChat(); if (!s) return; s.edits = !s.edits; $("allowedits").checked = s.edits; refreshLaneBar(); scheduleSave(); };
-document.addEventListener("click", (e) => { const w = laneWrap(); if (w && w.classList.contains("open") && !w.contains(e.target)) closeLaneMenu(); });
+$("panelbtn").onclick = () => toggleHud();
+$("hudclose").onclick = () => toggleHud();
+document.querySelectorAll("#hudtabs button[data-tab]").forEach((b) => b.onclick = () => setHudTab(b.dataset.tab));
+document.addEventListener("click", (e) => {
+  const lw = laneWrap(); if (lw && lw.classList.contains("open") && !lw.contains(e.target)) closeLaneMenu();
+  const pw = plusWrap(); if (pw && pw.classList.contains("open") && !pw.contains(e.target)) closePlusMenu();
+});
 $("stopbtn").onclick = stopTurn;
 $("zin").onclick = () => { autoFit = false; canvas.zoom(1.15); };
 $("zout").onclick = () => { autoFit = false; canvas.zoom(1 / 1.15); };
@@ -515,3 +681,12 @@ if (loadSessions()) switchSession(cur >= 0 ? cur : 0);  // restore saved chats
 else newSession();                                       // or start fresh
 window.addEventListener("beforeunload", saveSessions);
 wireBridge();
+
+// dev/preview-only test hook (gated to the Vite port; inert in the packaged app)
+if (location.port === "1420") {
+  window.__droolcat = {
+    parseBoardBlock, runBoardActions, curChat: () => curChat(), canvas,
+    logs: () => logs, runQueue: () => runQueue,
+    reset: () => { sessions.length = 0; cur = -1; localStorage.removeItem(STORE); location.reload(); },
+  };
+}

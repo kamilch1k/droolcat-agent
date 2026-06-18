@@ -125,13 +125,14 @@ export class GraphModel {
     const lane = this._lane(laneId);
     if (lane.headerId != null && this.byId[lane.headerId]) return this.byId[lane.headerId];
     const isMain = laneId === "main";
+    const isHelper = laneId === "board";
     const idx = this.laneOrder.indexOf(laneId);
     if (!isMain && !this.wtMap[laneId]) {
-      this.wtMap[laneId] = { name: "lane " + (idx + 1), color: LANE_PALETTE[idx % LANE_PALETTE.length] };
+      this.wtMap[laneId] = { name: isHelper ? "board helper" : "lane " + (idx + 1), color: isHelper ? "#b5791b" : LANE_PALETTE[idx % LANE_PALETTE.length] };
     }
     const h = this._add({
-      type: "lane", lane: laneId, wt: isMain ? "main" : laneId,
-      title: isMain ? "main lane" : "Agent lane " + (idx + 1),
+      type: "lane", lane: laneId, wt: isMain ? "main" : laneId, helper: isHelper,
+      title: isMain ? "main lane" : isHelper ? "Board Helper" : "Agent lane " + (idx + 1),
       status: "wait", model: opts.model || this.meta.model || "claude",
       mode: opts.mode || this.meta.mode || "bypass", ctx: "", turns: 0, detail: {},
     });
@@ -473,14 +474,40 @@ export function layout(model) {
   let acc = 0;
   for (let d = 0; d <= maxDepth; d++) { yOf[d] = acc; acc += (rowH[d] || SIZES.tool.h) + VGAP; }
 
-  const lo = model.laneOffset || {};
-  let minX = Infinity, maxX = -Infinity, maxY = 0;
+  // 1) base positions (centered per tidy-tree column)
   nodes.forEach((n) => {
     const sz = SIZES[n.type] || SIZES.tool;
     n.w = sz.w;
     if (!(typeof n.h === "number" && n.h)) n.h = sz.h; // keep measured height if set
     n.x = (x[n.id] || 0) + COL / 2 - n.w / 2;
     n.y = yOf[depth[n.id]] || 0;
+  });
+
+  // 2) spread lanes apart so their content boxes never intersect. The tidy-tree
+  //    packs columns tightly, so a wide result/header in one lane overlapped the
+  //    neighbouring lane. Repack lanes left->right in order with a fixed gutter.
+  const LANE_GAP = 96;
+  const laneNodes = {};
+  nodes.forEach((n) => { (laneNodes[n.lane] = laneNodes[n.lane] || []).push(n); });
+  const order = (model.laneOrder && model.laneOrder.length) ? model.laneOrder.slice() : [];
+  for (const k in laneNodes) if (!order.includes(k)) order.push(k);
+  let prevMax = -Infinity;
+  for (const lid of order) {
+    const ns = laneNodes[lid]; if (!ns || !ns.length) continue;
+    let lmin = Infinity, lmax = -Infinity;
+    ns.forEach((n) => { lmin = Math.min(lmin, n.x); lmax = Math.max(lmax, n.x + n.w); });
+    if (isFinite(prevMax) && lmin < prevMax + LANE_GAP) {
+      const d = (prevMax + LANE_GAP) - lmin;
+      ns.forEach((n) => { n.x += d; });
+      lmax += d;
+    }
+    prevMax = lmax;
+  }
+
+  // 3) user-dragged lane offsets, then normalize so nothing sits left of origin
+  const lo = model.laneOffset || {};
+  let minX = Infinity, maxX = -Infinity, maxY = 0;
+  nodes.forEach((n) => {
     const off = lo[n.lane];                            // user-dragged lane position
     if (off) { n.x += off.dx || 0; n.y += off.dy || 0; }
     minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h);

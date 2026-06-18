@@ -44,6 +44,11 @@ export class Canvas {
     this.model = null;
     this.els = {};        // node id -> DOM el
     this.edgeEls = {};     // edge key -> path
+    this.aux = null;       // auxiliary model (code graph) rendered as a board cluster
+    this.auxEls = {};      // "aux:"+id -> DOM el
+    this.auxEdgeEls = {};  // "aux:"+key -> path
+    this.auxOrigin = { x: 0, y: 0 };
+    this.clusterLabelEl = null;
     this.notes = [];       // sticky notes (Miro board)
     this.noteEls = {};
     this.cam = { x: 120, y: 60, s: 1 };
@@ -86,7 +91,7 @@ export class Canvas {
         this.els[n.id] = el;
       }
       // base class is set once; render() owns the state classes (show/running/sel/dim)
-      const base = "cnode t-" + n.type + (n.kind ? " k-" + n.kind : "");
+      const base = "cnode t-" + n.type + (n.kind ? " k-" + n.kind : "") + (n.helper ? " helper" : "");
       if (el._base !== base) { el.className = base; el._base = base; }
       // compact must be applied BEFORE we measure heights, so the layout reflows
       const compact = compactOf(n);
@@ -130,7 +135,9 @@ export class Canvas {
       layout(m);
     }
 
-    if (this.empty) this.empty.classList.toggle("hide", m.nodes.length > 0);
+    this._syncAux();
+
+    if (this.empty) this.empty.classList.toggle("hide", m.nodes.length > 0 || (this.aux && this.aux.nodes.length > 0));
     // force a reflow so freshly-appended nodes transition in (no rAF dependency —
     // the window may be backgrounded, where rAF is throttled to never)
     void this.world.offsetHeight;
@@ -152,6 +159,7 @@ export class Canvas {
       this._pill(el, n);
       maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h);
     }
+    if (this.aux) for (const n of this.aux.nodes) { maxX = Math.max(maxX, this.auxOrigin.x + n.x + n.w); maxY = Math.max(maxY, this.auxOrigin.y + n.y + n.h); }
     this.world.style.width = maxX + 240 + "px";
     this.world.style.height = maxY + 200 + "px";
     this.edgesSvg.setAttribute("width", maxX + 240);
@@ -164,6 +172,7 @@ export class Canvas {
       p.setAttribute("d", this._path(a, b));
       p.classList.add("on");
     }
+    this._renderAux();
 
     // header pill
     const s = m.stats();
@@ -258,27 +267,117 @@ export class Canvas {
   }
 
   _path(a, b) {
-    if (this.model && this.model.edgeStyle === "graph") {
-      // center-to-center S-curve (dependency graph, not a top-down tree)
-      const ax = a.x + a.w / 2, ay = a.y + a.h / 2, bx = b.x + b.w / 2, by = b.y + b.h / 2;
-      if (Math.abs(bx - ax) >= Math.abs(by - ay)) {
-        const mx = (ax + bx) / 2;
-        return `M${ax},${ay} C${mx},${ay} ${mx},${by} ${bx},${by}`;
-      }
-      const my = (ay + by) / 2;
-      return `M${ax},${ay} C${ax},${my} ${bx},${my} ${bx},${by}`;
-    }
+    if (this.model && this.model.edgeStyle === "graph") return this._curve(a, b);
     const x1 = a.x + a.w / 2, y1 = a.y + a.h, x2 = b.x + b.w / 2, y2 = b.y, my = (y1 + y2) / 2;
     return `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
+  }
+  // center-to-center S-curve (dependency graph, not a top-down tree)
+  _curve(a, b) {
+    const ax = a.x + a.w / 2, ay = a.y + a.h / 2, bx = b.x + b.w / 2, by = b.y + b.h / 2;
+    if (Math.abs(bx - ax) >= Math.abs(by - ay)) {
+      const mx = (ax + bx) / 2;
+      return `M${ax},${ay} C${mx},${ay} ${mx},${by} ${bx},${by}`;
+    }
+    const my = (ay + by) / 2;
+    return `M${ax},${ay} C${ax},${my} ${bx},${my} ${bx},${by}`;
+  }
+
+  // ---- code cluster on the same board (auxiliary model) -----------------
+  setAux(model) {
+    for (const k in this.auxEls) { this.auxEls[k].remove(); delete this.auxEls[k]; }
+    for (const k in this.auxEdgeEls) { this.auxEdgeEls[k].remove(); delete this.auxEdgeEls[k]; }
+    this.aux = model || null;
+    if (this.aux) {
+      // park the code cluster to the right of the current conversation
+      let maxX = 0;
+      if (this.model && this.model.nodes.length) for (const n of this.model.nodes) maxX = Math.max(maxX, n.x + n.w);
+      this.auxOrigin = { x: (maxX || 0) + 180, y: 0 };
+    } else if (this.clusterLabelEl) { this.clusterLabelEl.remove(); this.clusterLabelEl = null; }
+    this.sync();
+  }
+  _syncAux() {
+    if (!this.aux) return;
+    const live = new Set(this.aux.nodes.map((n) => "aux:" + n.id));
+    for (const k in this.auxEls) if (!live.has(k)) { this.auxEls[k].remove(); delete this.auxEls[k]; }
+    for (const n of this.aux.nodes) {
+      const key = "aux:" + n.id;
+      let el = this.auxEls[key];
+      if (!el) {
+        el = document.createElement("div");
+        el.className = "cnode t-file";
+        el.innerHTML = this._card(n);
+        el.addEventListener("click", (e) => { e.stopPropagation(); this._selectAux(n); });
+        this.world.appendChild(el);
+        this.auxEls[key] = el;
+      }
+    }
+    for (const e of this.aux.edges) {
+      const key = "aux:" + e.from + ">" + e.to;
+      if (!this.auxEdgeEls[key]) {
+        const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        p.setAttribute("class", "cedge cross");
+        this.edgesSvg.appendChild(p);
+        this.auxEdgeEls[key] = p;
+      }
+    }
+  }
+  _renderAux() {
+    if (!this.aux) return;
+    const ox = this.auxOrigin.x, oy = this.auxOrigin.y, abs = {};
+    for (const n of this.aux.nodes) {
+      const el = this.auxEls["aux:" + n.id]; if (!el) continue;
+      const X = ox + n.x, Y = oy + n.y;
+      abs[n.id] = { x: X, y: Y, w: n.w, h: n.h };
+      el.style.cssText = `left:${X}px;top:${Y}px;width:${n.w}px`;
+      el.classList.add("show");
+      el.classList.toggle("touched", !!n.touched);
+    }
+    for (const e of this.aux.edges) {
+      const p = this.auxEdgeEls["aux:" + e.from + ">" + e.to];
+      const a = abs[e.from], b = abs[e.to];
+      if (!p || !a || !b) continue;
+      p.setAttribute("d", this._curve(a, b));
+      p.classList.add("on");
+    }
+    if (!this.clusterLabelEl) { this.clusterLabelEl = document.createElement("div"); this.clusterLabelEl.className = "clusterlabel"; this.world.appendChild(this.clusterLabelEl); }
+    this.clusterLabelEl.textContent = this.aux.headline || "code";
+    this.clusterLabelEl.style.left = ox + "px";
+    this.clusterLabelEl.style.top = (oy - 30) + "px";
+  }
+  _selectAux(n) {
+    // lightweight inspector for a code file node
+    this.selected = null;
+    this.inspector.classList.add("open");
+    this.inwrap.innerHTML = `<div class="crumb"><span class="sw" style="background:${this._wtColor(n.wt)}"></span>${esc(n.dir || ".")}</div>
+      <div class="inh">${esc(n.title)}</div>
+      <div class="pills"><span class="aw-pill" style="background:var(--color-background-secondary);color:var(--color-text-secondary)">${esc(n.lang || "file")}</span>
+      <span class="aw-pill" style="background:var(--color-background-secondary);color:var(--color-text-secondary)">${n.importedBy || 0} in · ${n.imports || 0} out</span></div>
+      <div class="blk"><h4>Path</h4><div class="code">${esc(n.path || n.id)}</div></div>`;
+  }
+  // focus (pan/zoom) the camera onto the code cluster, loading-aware
+  focusAux() {
+    if (!this.aux || !this.aux.nodes.length) return;
+    const ns = this.aux.nodes;
+    let a = 1e9, b = 1e9, c = -1e9, d = -1e9;
+    for (const n of ns) { a = Math.min(a, n.x); b = Math.min(b, n.y); c = Math.max(c, n.x + n.w); d = Math.max(d, n.y + n.h); }
+    a += this.auxOrigin.x; c += this.auxOrigin.x; b += this.auxOrigin.y; d += this.auxOrigin.y;
+    const r = this.viewport.getBoundingClientRect(), pad = 64;
+    if (r.width < 2) return;
+    this.onUserCam && this.onUserCam();
+    const s = Math.min(1, Math.max(0.25, Math.min((r.width - pad * 2) / (c - a), (r.height - pad * 2) / (d - b))));
+    this.cam.s = s;
+    this.cam.x = pad - a * s + (r.width - pad * 2 - (c - a) * s) / 2;
+    this.cam.y = pad - b * s;
+    this._easeCam(); this._applyCam();
   }
 
   // lane color/name resolved from the model registry, with a static fallback
   _wtColor(k) {
-    const m = this.model && this.model.wtMap && this.model.wtMap[k];
+    const m = (this.model && this.model.wtMap && this.model.wtMap[k]) || (this.aux && this.aux.wtMap && this.aux.wtMap[k]);
     return (m && m.color) || (WT_FALLBACK[k] && WT_FALLBACK[k].color) || "var(--wt-main)";
   }
   _wtName(k) {
-    const m = this.model && this.model.wtMap && this.model.wtMap[k];
+    const m = (this.model && this.model.wtMap && this.model.wtMap[k]) || (this.aux && this.aux.wtMap && this.aux.wtMap[k]);
     return (m && m.name) || (WT_FALLBACK[k] && WT_FALLBACK[k].name) || k || "main";
   }
 
@@ -555,6 +654,7 @@ export class Canvas {
     let a = 1e9, b = 1e9, c = -1e9, d = -1e9;
     const items = [...(this.model ? this.model.nodes : []), ...this.notes];
     for (const n of items) { a = Math.min(a, n.x); b = Math.min(b, n.y); c = Math.max(c, n.x + (n.w || 180)); d = Math.max(d, n.y + (n.h || 80)); }
+    if (this.aux) for (const n of this.aux.nodes) { const X = this.auxOrigin.x + n.x, Y = this.auxOrigin.y + n.y; a = Math.min(a, X); b = Math.min(b, Y); c = Math.max(c, X + n.w); d = Math.max(d, Y + n.h); }
     if (!isFinite(a)) return null;
     return { a, b, c, d };
   }
@@ -572,6 +672,7 @@ export class Canvas {
     this._mm = { sc, ox, oy };
     ctx.fillStyle = "rgba(120,115,108,.5)";
     for (const n of (this.model ? this.model.nodes : [])) ctx.fillRect(n.x * sc + ox, n.y * sc + oy, Math.max(2, (n.w || 80) * sc), Math.max(2, (n.h || 40) * sc));
+    if (this.aux) { ctx.fillStyle = "rgba(58,134,200,.5)"; for (const n of this.aux.nodes) ctx.fillRect((this.auxOrigin.x + n.x) * sc + ox, (this.auxOrigin.y + n.y) * sc + oy, Math.max(2, n.w * sc), Math.max(2, n.h * sc)); }
     ctx.fillStyle = "rgba(181,121,27,.6)";
     for (const n of this.notes) ctx.fillRect(n.x * sc + ox, n.y * sc + oy, Math.max(2, (n.w || 180) * sc), Math.max(2, 60 * sc));
     const vx = (-this.cam.x / this.cam.s) * sc + ox, vy = (-this.cam.y / this.cam.s) * sc + oy;

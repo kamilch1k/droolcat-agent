@@ -90,7 +90,7 @@ fn turn_log_path(session_id: &str) -> PathBuf {
 }
 
 /// Spawn one turn of a Claude Code conversation and stream its events.
-fn run_claude(app: AppHandle, session_id: String, prompt: String, cwd: String, resume: Option<String>, edits: bool) -> Result<(), String> {
+fn run_claude(app: AppHandle, session_id: String, prompt: String, cwd: String, resume: Option<String>, edits: bool, append_system: Option<String>) -> Result<(), String> {
     // make sure the working folder exists — otherwise current_dir() makes spawn
     // fail outright (which surfaced as an opaque "session ended")
     if !cwd.trim().is_empty() && !Path::new(&cwd).is_dir() {
@@ -114,6 +114,11 @@ fn run_claude(app: AppHandle, session_id: String, prompt: String, cwd: String, r
         // proceeds autonomously with a sensible default instead.
         .arg("--disallowedTools")
         .arg("AskUserQuestion");
+    // Board Helper turns get an extra system instruction so the model knows it is
+    // the board organizer and how to emit board actions.
+    if let Some(sys) = append_system.filter(|s| !s.trim().is_empty()) {
+        cmd.arg("--append-system-prompt").arg(sys);
+    }
     if edits {
         // bypass ALL permission prompts so the agent just does the work in the
         // chat's folder (no approval friction). On by default; the chat's
@@ -196,6 +201,7 @@ fn start_session(
     cwd: Option<String>,
     resume: Option<String>,
     edits: Option<bool>,
+    append_system: Option<String>,
 ) -> Result<String, String> {
     if prompt.trim().is_empty() {
         return Err("empty prompt".into());
@@ -206,7 +212,7 @@ fn start_session(
         .or_else(|| std::env::var("USERPROFILE").ok())
         .or_else(|| std::env::var("HOME").ok())
         .unwrap_or_else(|| ".".into());
-    run_claude(app, sid.clone(), prompt, workdir, resume, edits.unwrap_or(false))?;
+    run_claude(app, sid.clone(), prompt, workdir, resume, edits.unwrap_or(false), append_system)?;
     Ok(sid)
 }
 
