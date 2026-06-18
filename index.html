@@ -51,6 +51,19 @@
           </div>
           <div class="hudbody" id="hudbody"></div>
         </div>
+        <div class="voicemode s-idle" id="voicemode" style="display:none">
+          <div class="vm-stage">
+            <div class="vm-lane" id="vmLane"><span class="sw" style="background:var(--wt-main)"></span><span id="vmLaneName">main</span></div>
+            <div class="vm-orb"><canvas class="vm-rings" id="vmRings"></canvas><div class="vm-core" id="vmCore"></div></div>
+            <div class="vm-status" id="vmStatus">Listening…</div>
+            <div class="vm-transcript" id="vmTranscript"></div>
+            <div class="vm-fallback" id="vmFallback"><input id="vmFallbackInput" placeholder="type a message…"/></div>
+            <div class="vm-controls">
+              <button class="vm-btn" id="vmPause">pause</button>
+              <button class="vm-btn primary" id="vmExit">done</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="promptbar">
         <div class="lanewrap" id="lanewrap">

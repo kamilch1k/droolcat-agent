@@ -10,6 +10,7 @@ import { I } from "./icons.js";
 import { GraphModel, layout } from "./graph.js";
 import { CodeGraphModel } from "./codegraph.js";
 import { Canvas } from "./canvas.js";
+import { VoiceMode } from "./voice.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -37,6 +38,24 @@ const canvas = new Canvas(
   }
 );
 
+// hands-free Voice Mode — listen, send into the active lane, read the reply back
+const voice = new VoiceMode(
+  {
+    root: $("voicemode"), canvas: $("vmRings"), core: $("vmCore"),
+    status: $("vmStatus"), transcript: $("vmTranscript"), lane: $("vmLaneName"),
+    pause: $("vmPause"), exit: $("vmExit"),
+    fallback: $("vmFallback"), fallbackInput: $("vmFallbackInput"),
+  },
+  {
+    onUtterance: (text) => {
+      const s = curChat(); if (!s) return;
+      voice.pendingChat = s.id; voice.pendingLane = s.activeLane;
+      sendPrompt(text);
+    },
+    getLaneLabel: () => { const s = curChat(); return s ? laneLabel(s, s.activeLane) : "main"; },
+  }
+);
+
 // ---- session (chat) state ----------------------------------------------
 
 let sessions = [];        // [{ id, title, graph, cwd, edits, notes, activeLane, laneClaudeId }]
@@ -55,6 +74,7 @@ let homePending = false;  // anchor a brand-new conversation at the top (no boun
 let syncQueued = false;
 let lastErr = "";         // last stderr line — shown if a turn ends with no result
 let runQueue = [];        // Board-Helper-spawned lane runs, executed one at a time
+let queueReturnLane = null; // { chatId, lane } — lane to restore once the queue drains
 let logs = [];            // rolling activity log for the HUD panel
 let hudOpen = false, hudTab = "logs";
 
@@ -102,6 +122,7 @@ function switchSession(i) {
   canvas.sync();
   canvas.fit();
   scheduleSave();
+  pump();   // resume any Board-Helper-queued runs waiting on this chat
 }
 
 // start a new independent agent lane in the current chat — spawns a "waiting
@@ -201,6 +222,13 @@ function endTurn(ok) {
     const lane = s.graph.lanes["board"];
     const res = lane && s.graph.byId[lane.lastResultId];
     if (res && res.summary) runBoardActions(parseBoardBlock(res.summary), s);
+  }
+  // Voice Mode -> read the reply of the turn it initiated back aloud
+  if (voice.active && s && voice.pendingChat === s.id) {
+    const L = s.graph.lanes[voice.pendingLane];
+    const res = L && s.graph.byId[L.lastResultId];
+    voice.speak(res && res.summary ? res.summary : (ok ? "Done." : "That turn ended without a response."));
+    voice.pendingChat = null;
   }
   scheduleSave();
   pump();   // run the next queued lane, if any
@@ -328,7 +356,7 @@ async function switchView(v) {
   if (v === "code") {
     setConn("run", "scanning repo…");
     await loadCodeGraph();
-    if (view !== requested) return;
+    if (view !== requested) { setConn(tauri ? "live" : "", tauri ? "ready" : "browser (sample only)"); return; }
     codeModel.setTouched(touchedFiles());
     canvas.setAux(codeModel);     // render/refresh the code cluster on the board
     setConn(tauri ? "live" : "", tauri ? "ready" : "browser (sample only)");
@@ -474,34 +502,19 @@ function toggleLaneMenu() {
 function closeLaneMenu() { const w = laneWrap(); if (w) w.classList.remove("open"); }
 function closePlusMenu() { const w = plusWrap(); if (w) w.classList.remove("open"); }
 
-// voice dictation via the WebView's Web Speech API (graceful no-op if absent)
-let recog = null, recording = false;
-function toggleMic() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { setConn("", "voice input isn't available in this build"); return; }
-  if (recording) { try { recog && recog.stop(); } catch {} return; }
-  try {
-    recog = new SR(); recog.lang = "en-US"; recog.interimResults = true; recog.continuous = false;
-    const base = $("prompt").value.trim();
-    recog.onresult = (e) => {
-      let t = ""; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
-      $("prompt").value = (base ? base + " " : "") + t.trim();
-    };
-    recog.onend = () => { recording = false; $("pbmic").classList.remove("on"); setConn(tauri ? "live" : "", tauri ? "ready" : "browser (sample only)"); };
-    recog.onerror = () => { recording = false; $("pbmic").classList.remove("on"); setConn("", "voice input error"); };
-    recog.start(); recording = true; $("pbmic").classList.add("on"); setConn("run", "listening…");
-  } catch { setConn("", "voice input isn't available in this build"); }
-}
-
 // ---- Board Helper: parse + execute the organizer's board actions ---------
 
 function nowClock() { const d = new Date(); return d.toTimeString().slice(0, 8); }
 
-// pull a fenced ```board (or ```json) block out of the helper's reply
+// pull the documented fenced ```board block out of the helper's reply. Use the
+// LAST one (the system prompt says to put nothing after it), so an illustrative
+// block earlier in the reply can't trigger execution.
 function parseBoardBlock(text) {
-  const m = /```(?:board|json)\s*([\s\S]*?)```/i.exec(String(text || ""));
-  if (!m) return [];
-  try { const v = JSON.parse(m[1].trim()); return Array.isArray(v) ? v : (v && Array.isArray(v.actions) ? v.actions : []); }
+  const re = /```board\s*([\s\S]*?)```/gi, s = String(text || "");
+  let m, last = null;
+  while ((m = re.exec(s))) last = m[1];
+  if (last == null) return [];
+  try { const v = JSON.parse(last.trim()); return Array.isArray(v) ? v : (v && Array.isArray(v.actions) ? v.actions : []); }
   catch { return []; }
 }
 
@@ -528,16 +541,31 @@ function runBoardActions(actions, s) {
   scheduleSave();
 }
 
-// run the next Board-Helper-spawned lane (one turn at a time)
+// run the next Board-Helper-spawned lane (one turn at a time). Resilient to the
+// user switching chats: jobs for absent chats are dropped, jobs for non-active
+// chats wait (and resume when that chat is reopened — pump() is also called from
+// switchSession), and the user's own lane selection is restored once drained.
 function pump() {
-  if (runningId || !runQueue.length) return;
-  const job = runQueue[0];
+  if (runningId) return;
+  runQueue = runQueue.filter((j) => chatById(j.chatId));   // drop jobs for closed chats
   const s = curChat();
-  if (!s || s.id !== job.chatId) return;   // wait until that chat is active again
-  runQueue.shift();
-  s.activeLane = job.lane;
-  refreshLaneBar();
-  sendPrompt(job.prompt);
+  if (runQueue.length && s) {
+    const idx = runQueue.findIndex((j) => j.chatId === s.id);
+    if (idx >= 0) {
+      const job = runQueue.splice(idx, 1)[0];
+      if (!queueReturnLane) queueReturnLane = { chatId: s.id, lane: s.activeLane };
+      s.activeLane = job.lane;
+      refreshLaneBar();
+      sendPrompt(job.prompt);
+      return;
+    }
+  }
+  // nothing runnable now — if fully drained, restore the lane the user was on
+  if (!runQueue.length && queueReturnLane) {
+    const cs = chatById(queueReturnLane.chatId);
+    if (cs) { cs.activeLane = queueReturnLane.lane; if (curChat() === cs) refreshLaneBar(); scheduleSave(); }
+    queueReturnLane = null;
+  }
 }
 
 // ---- Logs / Agents / Stats HUD -------------------------------------------
@@ -659,7 +687,8 @@ $("allowedits").addEventListener("change", () => { const s = curChat(); if (s) {
 $("lanebtn").onclick = (e) => { e.stopPropagation(); closePlusMenu(); toggleLaneMenu(); };
 $("pbnew").onclick = (e) => { e.stopPropagation(); closeLaneMenu(); const w = plusWrap(); if (w) w.classList.toggle("open"); };
 $("plusnewlane").onclick = (e) => { e.stopPropagation(); closePlusMenu(); newLane(); };
-$("pbmic").onclick = () => toggleMic();
+$("pbmic").onclick = () => voice.enter();
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && voice.active) voice.exit(); });
 $("pbmode").onclick = () => { const s = curChat(); if (!s) return; s.edits = !s.edits; $("allowedits").checked = s.edits; refreshLaneBar(); scheduleSave(); };
 $("panelbtn").onclick = () => toggleHud();
 $("hudclose").onclick = () => toggleHud();
@@ -686,7 +715,7 @@ wireBridge();
 if (location.port === "1420") {
   window.__droolcat = {
     parseBoardBlock, runBoardActions, curChat: () => curChat(), canvas,
-    logs: () => logs, runQueue: () => runQueue,
+    logs: () => logs, runQueue: () => runQueue, voice,
     reset: () => { sessions.length = 0; cur = -1; localStorage.removeItem(STORE); location.reload(); },
   };
 }
