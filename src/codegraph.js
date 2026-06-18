@@ -39,19 +39,43 @@ export class CodeGraphModel {
     this.layout();
   }
 
+  // force-directed (Fruchterman–Reingold) layout so imports read as a real
+  // dependency graph — connected files attract, everything else repels.
   layout() {
-    const W = 178, H = 60, COLW = 212, ROWH = 76, PADX = 40, PADY = 24;
-    const byDir = {};
-    for (const n of this.nodes) (byDir[n.dir] = byDir[n.dir] || []).push(n);
-    // widest clusters first, then alphabetical
-    const dirNames = Object.keys(byDir).sort((a, b) => byDir[b].length - byDir[a].length || a.localeCompare(b));
-    let x = PADX;
-    for (const d of dirNames) {
-      const list = byDir[d].sort((a, b) => b.importedBy - a.importedBy || a.title.localeCompare(b.title));
-      let y = PADY;
-      for (const n of list) { n.w = W; n.h = H; n.x = x; n.y = y; y += ROWH; }
-      x += COLW;
+    const nodes = this.nodes, edges = this.edges, N = nodes.length;
+    if (!N) return;
+    nodes.forEach((n) => { n.w = 168; n.h = 52; });
+    if (N === 1) { nodes[0].x = 40; nodes[0].y = 40; return; }
+    // deterministic golden-spiral seed (no Math.random)
+    nodes.forEach((n, i) => { const a = i * 2.399963, r = 26 * Math.sqrt(i + 1); n.x = Math.cos(a) * r; n.y = Math.sin(a) * r; });
+    const idx = {}; nodes.forEach((n, i) => (idx[n.id] = i));
+    const E = edges.map((e) => [idx[e.from], idx[e.to]]).filter((p) => p[0] != null && p[1] != null);
+    const k = 210, k2 = k * k, iters = N > 140 ? 170 : 260, cool = 0.985;
+    let temp = 320;
+    for (let it = 0; it < iters; it++) {
+      const dx = new Float64Array(N), dy = new Float64Array(N);
+      for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {       // repulsion k²/d
+        let vx = nodes[i].x - nodes[j].x, vy = nodes[i].y - nodes[j].y;
+        let dist = Math.hypot(vx, vy) || 0.01;
+        const f = k2 / dist, ux = vx / dist, uy = vy / dist;
+        dx[i] += ux * f; dy[i] += uy * f; dx[j] -= ux * f; dy[j] -= uy * f;
+      }
+      for (const [a, b] of E) {                                          // attraction d²/k along imports
+        let vx = nodes[a].x - nodes[b].x, vy = nodes[a].y - nodes[b].y;
+        let dist = Math.hypot(vx, vy) || 0.01;
+        const f = (dist * dist) / k, ux = vx / dist, uy = vy / dist;
+        dx[a] -= ux * f; dy[a] -= uy * f; dx[b] += ux * f; dy[b] += uy * f;
+      }
+      for (let i = 0; i < N; i++) {                                      // integrate (temp-capped) + gentle centering
+        const d = Math.hypot(dx[i], dy[i]) || 0.01, cap = Math.min(d, temp);
+        nodes[i].x += (dx[i] / d) * cap - nodes[i].x * 0.003;
+        nodes[i].y += (dy[i] / d) * cap - nodes[i].y * 0.003;
+      }
+      temp *= cool;
     }
+    let minX = 1e9, minY = 1e9;
+    for (const n of nodes) { minX = Math.min(minX, n.x); minY = Math.min(minY, n.y); }
+    for (const n of nodes) { n.x = n.x - minX + 40; n.y = n.y - minY + 40; }
   }
 
   // cross-link: flag files whose path matches anything the agents touched

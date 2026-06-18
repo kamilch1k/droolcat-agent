@@ -22,6 +22,16 @@ function balanceMd(s) {
   return s;
 }
 
+// a one-line gist of a response — first sentence, markdown/code stripped, capped
+function summarize(s) {
+  s = String(s || "").replace(/```[\s\S]*?```/g, " ").replace(/`([^`]+)`/g, "$1").replace(/[*#>_]/g, "").replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  const m = s.match(/^.*?[.!?:](\s|$)/);
+  let h = (m ? m[0] : s).trim().replace(/[:]$/, "");
+  if (h.length > 92) h = h.slice(0, 90).replace(/\s+\S*$/, "") + "…";
+  return h;
+}
+
 // light, safe markdown -> HTML for Claude Code output (escape first, then format)
 function mdToHtml(s) {
   s = esc(String(s || ""));
@@ -293,7 +303,9 @@ export class Canvas {
     if (n.type === "say") {
       const long = (n.text || "").length > 480; // expanding reveals meaningfully more
       const btn = long ? `<button class="outbtn">${n.expanded ? "▴ less" : "▾ more"}</button>` : "";
-      return `<div class="row"><span class="aw-ic">${I.orch}</span><span class="lbl">Claude</span>${this._copyBtn()}</div>
+      const head = (n.text || "").length > 180 ? summarize(n.text) : "";
+      const sum = head ? `<div class="node-sum">${esc(head)}</div>` : "";
+      return `<div class="row"><span class="aw-ic">${I.orch}</span><span class="lbl">Claude</span>${this._copyBtn()}</div>${sum}
         <div class="saytext md${n.expanded ? " expanded" : long ? " clamped" : ""}">${mdToHtml(n.text || "")}${n.status === "run" ? '<span class="caret"></span>' : ""}</div>${btn}`;
     }
     if (n.type === "orch")
@@ -329,8 +341,10 @@ export class Canvas {
       const collapsed = n.collapsed == null ? veryBig : n.collapsed;
       const shown = collapsed ? balanceMd(full.slice(0, 420).replace(/\s+\S*$/, "")) : full;
       const btn = full.length > 280 ? `<button class="outbtn">${collapsed ? "▾ expand full output" : "▴ collapse"}</button>` : "";
+      const head = full.length > 180 ? summarize(full) : "";
+      const sum = head ? `<div class="node-sum">${esc(head)}</div>` : "";
       return `<div class="rh"><span class="aw-ic" style="color:${n.donePill && n.donePill.k === "danger" ? "var(--color-text-danger)" : "var(--color-text-success)"}">${I.check}</span>
-        <span class="lbl">${esc(n.title)}</span><span class="meta">${esc(n.meta || "")}</span>${this._copyBtn()}</div>
+        <span class="lbl">${esc(n.title)}</span><span class="meta">${esc(n.meta || "")}</span>${this._copyBtn()}</div>${sum}
         <div class="output md">${mdToHtml(shown)}${collapsed ? "…" : ""}</div>${btn}`;
     }
     return "";
