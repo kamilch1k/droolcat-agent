@@ -201,9 +201,29 @@ export class GraphModel {
     return p;
   }
 
+  // id of the most recently added real node in a lane (skips the lane header) —
+  // the true tail to chain onto when the turn cursor has been lost
+  _laneTail(laneId = "main") {
+    for (let i = this.nodes.length - 1; i >= 0; i--) {
+      const n = this.nodes[i];
+      if (n.type === "lane") continue;
+      if ((n.lane || "main") === laneId) return n.id;
+    }
+    return null;
+  }
+  // re-open the lane's previous turn so an out-of-band assistant message chains
+  // onto the real tail instead of spawning a phantom "(session)" prompt branch
+  resumeTurn(laneId = "main") {
+    const tailId = this._laneTail(laneId);
+    if (tailId == null) return false;
+    this.turn = { laneId, anchorId: tailId, lastId: tailId, byToolUse: {}, frontier: new Set([tailId]), tokAcc: 0, resultId: null, streamSay: null, streamBlocks: {}, usedPartials: false };
+    this.running = true;
+    return true;
+  }
+
   apply(evt) {
     if (!evt || typeof evt !== "object") return;
-    if (!this.turn) this.beginTurn("(session)");
+    if (!this.turn && !this.resumeTurn()) this.beginTurn("(session)");
     switch (evt.type) {
       case "system": return this._system(evt);
       case "stream_event": return this._streamEvent(evt);
@@ -414,7 +434,10 @@ export class GraphModel {
         if (this.turn) { this._lane("main").lastResultId = this.turn.lastId; this.turn = null; }
         this.beginTurn(clip2(trimmed, 2000), "main");
       } else if (o.type === "assistant") {
-        if (!this.turn) this.beginTurn("(session)", "main");
+        // an assistant line with no open turn = the prior turn's cursor was lost
+        // across a poll boundary; resume its real tail rather than fabricating a
+        // "(session)" prompt. Only fall back to "(session)" if the lane is empty.
+        if (!this.turn && !this.resumeTurn("main")) this.beginTurn("(session)", "main");
         this.apply({ type: "assistant", message: o.message });
       }
     }

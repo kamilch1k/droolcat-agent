@@ -22,6 +22,7 @@ export const I = {
   copy: SVG('<rect x="5.4" y="5.4" width="7.2" height="7.2" rx="1.4"/><path d="M10.6 5.4V4a1.4 1.4 0 0 0-1.4-1.4H4.4A1.4 1.4 0 0 0 3 4v4.8a1.4 1.4 0 0 0 1.4 1.4h1"/>'),
   up: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12.5V4M4.5 7.5L8 4l3.5 3.5"/></svg>`,
   play: SVG('<path d="M5 3.5l7 4.5-7 4.5z" fill="currentColor" stroke="none"/>'),
+  follow: SVG('<circle cx="8" cy="8" r="2.3"/><path d="M8 1.4v2.2M8 12.4v2.2M1.4 8h2.2M12.4 8h2.2"/>'),
   // big empty-state glyph
   graph: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4" r="2"/><circle cx="5" cy="14" r="2"/><circle cx="12" cy="14" r="2"/><circle cx="19" cy="14" r="2"/><circle cx="5" cy="21" r="1.6"/><circle cx="19" cy="21" r="1.6"/><path d="M12 6v2M11 13l-5-7M13 13l5-7M5 16v3M19 16v3"/></svg>`,
 };

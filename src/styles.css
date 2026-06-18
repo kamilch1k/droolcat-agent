@@ -82,6 +82,9 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 .zc button{background:var(--color-background-primary);border:none;padding:6px 10px;font-size:13px}
 .zc button+button{border-left:0.5px solid var(--color-border-secondary)}
 .zc button:hover{background:var(--color-background-secondary)}
+.zc button#followbtn{display:flex;align-items:center;padding:6px 9px;color:var(--color-text-secondary)}
+.zc button#followbtn.on{background:var(--color-text-info);color:#fff}
+.zc button#followbtn.on:hover{background:var(--color-text-info)}
 .zc .zl{padding:6px 6px;font-size:12px;color:var(--color-text-secondary);min-width:40px;text-align:center}
 
 .viewport{flex:1;position:relative;overflow:hidden;cursor:grab}

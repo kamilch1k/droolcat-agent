@@ -21,6 +21,7 @@ $("ic-empty").innerHTML = I.graph;
 $("ic-newlane").innerHTML = I.plus;
 $("ic-newlane2").innerHTML = I.plus;
 $("ic-mic").innerHTML = I.mic;
+$("ic-follow").innerHTML = I.follow;
 
 const canvas = new Canvas(
   {
@@ -33,7 +34,7 @@ const canvas = new Canvas(
     onNewLane: () => newLane(),                  // right-click "new agent lane"
     onPersist: () => scheduleSave(),             // notes moved/edited -> save
     onCompact: (laneId) => toggleCompact(laneId),// lane header "compact" button
-    onUserCam: () => { autoFit = false; },       // user grabbed the camera -> stop following
+    onUserCam: () => { setFollow(false); },      // user grabbed the camera -> stop following
     onLaneSelect: (laneId) => selectLane(laneId),// clicked a lane header -> make it active
     onCloseAux: () => setView("agents"),         // closed the code cluster -> reflect in the tab
   }
@@ -72,6 +73,10 @@ let tauri = null;
 let autoFit = true;       // follow the conversation until the user pans/zooms
 let fitPending = false;   // do a full fit on the next sync (turn start / switch)
 let homePending = false;  // anchor a brand-new conversation at the top (no bounce)
+// the "follow live" toolbar toggle mirrors autoFit: when on, the camera keeps
+// the newest node in view as the graph grows; a manual pan/zoom turns it off
+function updateFollowBtn() { const b = $("followbtn"); if (b) b.classList.toggle("on", autoFit); }
+function setFollow(on) { autoFit = !!on; updateFollowBtn(); }
 let syncQueued = false;
 let lastErr = "";         // last stderr line — shown if a turn ends with no result
 let runQueue = [];        // Board-Helper-spawned lane runs, executed one at a time
@@ -281,6 +286,7 @@ function scheduleSync() {
       else if (fitPending) { fitPending = false; canvas.fit(); }
       else canvas.follow();   // pan to the newest node at constant zoom (no jumpy refit)
     }
+    updateFollowBtn();        // keep the follow toggle in sync with autoFit
   };
   requestAnimationFrame(run);
   setTimeout(run, 120);
@@ -1137,10 +1143,11 @@ $("palinput").addEventListener("keydown", (e) => {
 });
 $("palette").addEventListener("mousedown", (e) => { if (e.target.id === "palette") closePalette(); });
 $("stopbtn").onclick = stopTurn;
-$("zin").onclick = () => { autoFit = false; canvas.zoom(1.15); };
-$("zout").onclick = () => { autoFit = false; canvas.zoom(1 / 1.15); };
+$("zin").onclick = () => { setFollow(false); canvas.zoom(1.15); };
+$("zout").onclick = () => { setFollow(false); canvas.zoom(1 / 1.15); };
 $("fit").onclick = () => canvas.fit();
 $("tolatest").onclick = () => canvas.goLatest();
+$("followbtn").onclick = () => { setFollow(!autoFit); if (autoFit) canvas.goLatest(); };
 $("findbtn").onclick = () => toggleSearch();
 $("sclose").onclick = () => closeSearch();
 $("snext").onclick = () => updateSearchCount(canvas.nextHit(1));
@@ -1151,7 +1158,7 @@ $("searchinput").addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeSearch();
 });
 $("replay").onclick = () => { if (source === "sample") replaySampleTurn(); else replaySampleTurn(); };
-$("viewport").addEventListener("mousedown", () => { autoFit = false; });
+$("viewport").addEventListener("mousedown", () => { setFollow(false); });
 
 // ---- boot ---------------------------------------------------------------
 
@@ -1165,6 +1172,7 @@ window.addEventListener("beforeunload", saveSessions);
 wireBridge();
 loadCcSessions();   // populate the Claude Code session list (desktop app only)
 wireSidebarResize();
+updateFollowBtn();  // reflect the initial follow state on the toolbar toggle
 
 // dev/preview-only test hook (gated to the Vite port; inert in the packaged app)
 if (location.port === "1420") {
