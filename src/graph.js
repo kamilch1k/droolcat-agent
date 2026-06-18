@@ -594,6 +594,24 @@ export function layout(model) {
     n.y = yOf[depth[n.id]] || 0;
   });
 
+  // 1.5) de-overlap rows: within each lane+depth, push nodes apart so their
+  //      boxes never intersect horizontally. The tidy tree assumes one node per
+  //      row in a linear turn; forked structures (e.g. graphs persisted by older
+  //      reducer versions that branched a turn into siblings) or wide nodes can
+  //      land two boxes on the same row. This pass makes overlap impossible.
+  const HGAP = 30;
+  const byLaneRow = {};
+  nodes.forEach((n) => { const k = (n.lane || "main") + "|" + depth[n.id]; (byLaneRow[k] = byLaneRow[k] || []).push(n); });
+  for (const k in byLaneRow) {
+    const row = byLaneRow[k];
+    if (row.length < 2) continue;
+    row.sort((a, b) => a.x - b.x);
+    for (let i = 1; i < row.length; i++) {
+      const need = row[i - 1].x + row[i - 1].w + HGAP;
+      if (row[i].x < need) row[i].x = need;
+    }
+  }
+
   // 2) spread lanes apart so their content boxes never intersect. The tidy-tree
   //    packs columns tightly, so a wide result/header in one lane overlapped the
   //    neighbouring lane. Repack lanes left->right in order with a fixed gutter.
