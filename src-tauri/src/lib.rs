@@ -390,6 +390,55 @@ fn claude_path() -> String {
     find_claude()
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitCommit {
+    hash: String,
+    short: String,
+    parents: usize,
+    refs: String,
+    author: String,
+    when: String,
+    subject: String,
+}
+
+/// Read the recent git history of a folder for the git-tree panel.
+#[tauri::command]
+fn git_graph(cwd: String, limit: Option<usize>) -> Result<Vec<GitCommit>, String> {
+    if cwd.trim().is_empty() || !Path::new(&cwd).is_dir() {
+        return Err("no folder".into());
+    }
+    let n = limit.unwrap_or(60);
+    let fmt = "%H\x1f%h\x1f%P\x1f%D\x1f%an\x1f%cr\x1f%s";
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(&cwd).arg("log")
+        .arg(format!("--max-count={n}"))
+        .arg(format!("--pretty=format:{fmt}"));
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let output = cmd.output().map_err(|e| format!("git not available: {e}"))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(if err.trim().is_empty() { "not a git repository".into() } else { err.trim().to_string() });
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let f: Vec<&str> = line.split('\u{1f}').collect();
+        if f.len() < 7 { continue; }
+        out.push(GitCommit {
+            hash: f[0].to_string(),
+            short: f[1].to_string(),
+            parents: f[2].split_whitespace().filter(|s| !s.is_empty()).count(),
+            refs: f[3].to_string(),
+            author: f[4].to_string(),
+            when: f[5].to_string(),
+            subject: f[6].to_string(),
+        });
+    }
+    Ok(out)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -401,6 +450,7 @@ pub fn run() {
             list_claude_sessions,
             read_session_tail,
             read_session_since,
+            git_graph,
             claude_path
         ])
         .run(tauri::generate_context!())

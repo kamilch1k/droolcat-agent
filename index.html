@@ -32,6 +32,7 @@
         </div>
         <button class="replay" id="stopbtn" style="display:none;color:var(--color-text-danger)">stop</button>
         <button class="replay" id="replay"><span class="aw-ic" id="ic-play"></span>replay</button>
+        <button class="replay" id="chatbtn" title="conversation + git panel">chat</button>
         <button class="replay" id="panelbtn" title="logs / agents / stats">panels</button>
         <button class="replay" id="findbtn" title="search the board">find</button>
         <div class="zc"><button id="zout">−</button><span class="zl" id="zl">100%</span><button id="zin">+</button><button id="fit">fit</button><button id="tolatest" title="jump to latest">↓</button></div>
@@ -102,6 +103,10 @@
         </div>
         <button class="sendbtn" id="send"><span class="aw-ic" id="ic-up"></span></button>
       </div>
+    </div>
+    <div class="chatpanel" id="chatpanel">
+      <div class="cp-head"><span class="cp-tabs" id="cptabs"><button data-cp="chat" class="active">conversation</button><button data-cp="git">git</button></span><button class="cp-x" id="chatclose">×</button></div>
+      <div class="chatbody" id="chatbody"></div>
     </div>
     <div class="inspector" id="inspector"><div class="inwrap" id="inwrap"></div></div>
   </div>

@@ -117,11 +117,11 @@ export class Canvas {
       if (el._base !== base) { el.className = base; el._base = base; }
       // compact must be applied BEFORE we measure heights, so the layout reflows
       const compact = compactOf(n);
-      if (el._compact !== compact) { el.classList.toggle("compact", compact); el._compact = compact; }
+      if (el._compact !== compact) { el.classList.toggle("compact", compact); el._compact = compact; el._dirty = true; }
       const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.text || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.resultChip || ""}|${n.summary ? n.summary.length : 0}|${n.meta || ""}|${n.model || ""}|${n.mode || ""}|${n.ctx || ""}|${n.ctxTokens || 0}|${n.turns || 0}|${n.expanded ? 1 : 0}|${n.collapsed ? 1 : 0}|${this.searchHits && this.searchHits.includes(n.id) ? 1 : 0}`;
       if (el._sig !== sig) {
         el.innerHTML = this._card(n);
-        el._sig = sig;
+        el._sig = sig; el._dirty = true;
         const cp = el.querySelector(".copybtn");
         if (cp) cp.addEventListener("click", (e) => { e.stopPropagation(); this._copy(n, cp); });
         if (n.type === "result" || n.type === "say") {
@@ -154,12 +154,17 @@ export class Canvas {
     // tight content doesn't leave a gap (line starting in empty space) and long
     // content doesn't overlap. Only for the agent graph (cards vary by text).
     if (typeof m.beginTurn === "function") {
+      // only (re)measure nodes whose content/width changed — measuring every node
+      // on every event forces a full reflow and is the main source of lag
+      let anyDirty = false;
       for (const n of m.nodes) {
-        const el = this.els[n.id]; if (el) el.style.width = (n.kind === "todo" ? 236 : (SIZES[n.type] || SIZES.tool).w) + "px";
+        const el = this.els[n.id]; if (!el) continue;
+        if (n.h == null || el._dirty) { el.style.width = (n.kind === "todo" ? 236 : (SIZES[n.type] || SIZES.tool).w) + "px"; el._measure = true; anyDirty = true; }
+        else el._measure = false;
       }
-      void this.world.offsetHeight;
-      for (const n of m.nodes) {
-        const el = this.els[n.id]; if (el) n.h = el.offsetHeight;
+      if (anyDirty) {
+        void this.world.offsetHeight;
+        for (const n of m.nodes) { const el = this.els[n.id]; if (el && el._measure) { n.h = el.offsetHeight; el._dirty = false; el._measure = false; } }
       }
       layout(m);
     }

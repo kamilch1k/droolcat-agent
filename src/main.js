@@ -143,6 +143,7 @@ function switchSession(i) {
   closePlusMenu();
   refreshLaneBar();
   if (hudOpen) renderHud();
+  if (panelOpen) renderPanel();
   renderSessions();
   canvas.sync();
   canvas.fit();
@@ -274,6 +275,7 @@ function scheduleSync() {
     syncQueued = false;
     canvas.sync(); // canvas.sync() measures card heights + lays out the agent graph itself
     renderSessions();
+    if (panelOpen && panelTab === "chat") renderConversation();
     if (autoFit) {
       if (homePending) { homePending = false; canvas.home(); }      // first turn: anchor at top
       else if (fitPending) { fitPending = false; canvas.fit(); }
@@ -832,6 +834,60 @@ function renderHud() {
   }
 }
 
+// ---- conversation + git panel (right side) -------------------------------
+
+let panelOpen = false, panelTab = "chat";
+function toggleChatPanel() {
+  panelOpen = !panelOpen;
+  $("chatpanel").classList.toggle("open", panelOpen);
+  $("chatbtn").classList.toggle("active", panelOpen);
+  if (panelOpen) renderPanel();
+}
+function setPanelTab(tab) {
+  panelTab = tab;
+  document.querySelectorAll("#cptabs button[data-cp]").forEach((b) => b.classList.toggle("active", b.dataset.cp === tab));
+  renderPanel();
+}
+function renderPanel() { if (!panelOpen) return; if (panelTab === "git") renderGitTree(); else renderConversation(); }
+function renderConversation() {
+  const host = $("chatbody"); const s = curChat(); if (!host) return;
+  if (!s) { host.innerHTML = `<div class="empty-side">No chat selected.</div>`; return; }
+  const go = (id) => `<button class="cm-go" data-go="${id}" title="show on board">⌖</button>`;
+  let h = "";
+  for (const n of s.graph.nodes) {
+    if (n.type === "lane") { h += `<div class="cm-lane">${escapeHtml(n.title || "lane")}</div>`; continue; }
+    if (n.type === "prompt") h += `<div class="cm cm-you" data-go="${n.id}"><div class="cm-r">You${go(n.id)}</div><div class="cm-b">${escapeHtml(clip(n.text, 500))}</div></div>`;
+    else if (n.type === "say") h += `<div class="cm cm-ai" data-go="${n.id}"><div class="cm-r">Claude${go(n.id)}</div><div class="cm-b">${escapeHtml(clip(n.text, 700))}</div></div>`;
+    else if (n.type === "tool") h += `<div class="cm cm-tool" data-go="${n.id}"><span class="cm-t">${escapeHtml(n.title)} ${escapeHtml(n.file || "")}</span>${n.resultChip ? `<span class="rchip">${escapeHtml(n.resultChip)}</span>` : ""}${go(n.id)}</div>`;
+    else if (n.type === "agent") h += `<div class="cm cm-tool" data-go="${n.id}"><span class="cm-t">◳ ${escapeHtml(n.title)}</span>${go(n.id)}</div>`;
+    else if (n.type === "result") h += `<div class="cm cm-res" data-go="${n.id}"><div class="cm-r">Result${go(n.id)}</div><div class="cm-b">${escapeHtml(clip(n.summary, 500))}</div></div>`;
+  }
+  host.innerHTML = h || `<div class="empty-side">No messages yet.</div>`;
+  host.querySelectorAll("[data-go]").forEach((el) =>
+    el.addEventListener("click", (e) => { e.stopPropagation(); if (canvas.model === s.graph) canvas.zoomToNode(el.dataset.go); }));
+  host.scrollTop = host.scrollHeight;
+}
+async function renderGitTree() {
+  const host = $("chatbody"); const s = curChat();
+  const dir = (s && s.cwd) || (s && s.graph.meta && s.graph.meta.cwd) || "";
+  const t = await getTauri();
+  if (!t) { host.innerHTML = `<div class="empty-side">The git tree is available in the desktop app.</div>`; return; }
+  if (!dir) { host.innerHTML = `<div class="empty-side">Set a working folder (＋) to see its git history.</div>`; return; }
+  host.innerHTML = `<div class="empty-side">Reading git history…</div>`;
+  try {
+    const commits = await t.invoke("git_graph", { cwd: dir, limit: 60 });
+    if (panelTab !== "git") return;
+    if (!commits || !commits.length) { host.innerHTML = `<div class="empty-side">No commits.</div>`; return; }
+    host.innerHTML = commits.map((c, i) => {
+      const refs = (c.refs || "").split(",").map((r) => r.trim()).filter((r) => r && r !== "HEAD");
+      const ref = refs.length ? `<span class="gitref">${escapeHtml(refs[0].replace("HEAD -> ", "").replace("tag: ", "⌖ "))}</span>` : "";
+      return `<div class="gitrow${i === 0 ? " head" : ""}"><div class="gitrail"><div class="gitdot"></div></div>
+        <div class="gitmeta"><div class="gitmsg">${ref}${escapeHtml(c.subject)}</div>
+        <div class="gitsub">${escapeHtml(c.short)} · ${escapeHtml(c.author)} · ${escapeHtml(c.when)}</div></div></div>`;
+    }).join("");
+  } catch (e) { host.innerHTML = `<div class="empty-side">${escapeHtml(String(e))}</div>`; }
+}
+
 // ---- board search controls -----------------------------------------------
 
 function toggleSearch() {
@@ -1003,6 +1059,9 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && voice.ac
 $("pbmode").onclick = () => { const s = curChat(); if (!s) return; s.edits = !s.edits; $("allowedits").checked = s.edits; refreshLaneBar(); scheduleSave(); };
 $("pbmodel").onclick = (e) => { e.stopPropagation(); closeLaneMenu(); closePlusMenu(); toggleModelMenu(); };
 $("panelbtn").onclick = () => toggleHud();
+$("chatbtn").onclick = () => toggleChatPanel();
+$("chatclose").onclick = () => toggleChatPanel();
+document.querySelectorAll("#cptabs button[data-cp]").forEach((b) => b.onclick = () => setPanelTab(b.dataset.cp));
 $("hudclose").onclick = () => toggleHud();
 document.querySelectorAll("#hudtabs button[data-tab]").forEach((b) => b.onclick = () => setHudTab(b.dataset.tab));
 document.addEventListener("click", (e) => {

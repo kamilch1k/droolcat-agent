@@ -343,6 +343,41 @@ button.pbtag{cursor:pointer}
 .cnode.compact{padding:6px 10px}
 .cnode.compact .think,.cnode.compact .file,.cnode.compact .wttag,.cnode.compact .saytext,.cnode.compact .role{display:none}
 
+/* right-side conversation + git panel */
+.chatpanel{width:0;flex:none;border-left:0.5px solid var(--color-border-tertiary);overflow:hidden;transition:width .2s;background:var(--color-background-primary);display:flex;flex-direction:column}
+.chatpanel.open{width:336px}
+.cp-head{display:flex;align-items:center;gap:8px;padding:8px 10px 8px 12px;border-bottom:0.5px solid var(--color-border-tertiary);flex:none}
+.cp-tabs{display:flex;gap:2px}
+.cp-tabs button{background:none;border:none;font-size:11.5px;color:var(--color-text-secondary);padding:5px 9px;border-radius:6px;cursor:pointer}
+.cp-tabs button:hover{background:var(--color-background-secondary)}
+.cp-tabs button.active{background:var(--color-background-secondary);color:var(--color-text-primary);font-weight:500}
+.cp-x{margin-left:auto;background:none;border:none;font-size:16px;color:var(--color-text-tertiary);cursor:pointer;padding:0 4px}
+.cp-x:hover{color:var(--color-text-primary)}
+.chatbody{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:9px;width:336px}
+.cm{border-radius:9px;padding:8px 10px;cursor:pointer;border:0.5px solid transparent;transition:border-color .12s}
+.cm:hover{border-color:var(--color-border-secondary)}
+.cm-r{display:flex;align-items:center;font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--color-text-tertiary);margin-bottom:3px}
+.cm-go{margin-left:auto;background:none;border:none;color:var(--color-text-tertiary);cursor:pointer;font-size:13px;padding:0 2px;opacity:0;transition:opacity .12s}
+.cm:hover .cm-go{opacity:.8}
+.cm-go:hover{color:var(--color-text-info);opacity:1}
+.cm-b{font-size:12px;line-height:1.45;color:var(--color-text-primary);white-space:pre-wrap;word-break:break-word;max-height:150px;overflow:hidden}
+.cm-you{background:var(--color-background-secondary)}
+.cm-res{background:var(--color-background-secondary);border-radius:var(--radius-lg)}
+.cm-tool{display:flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:10.5px;color:var(--color-text-secondary);padding:6px 10px}
+.cm-tool .cm-t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cm-lane{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--color-text-tertiary);text-align:center;padding:5px 0 2px}
+/* git tree */
+.gitrow{display:flex;gap:9px;align-items:flex-start;font-size:12px;padding:2px 0}
+.gitrail{position:relative;width:14px;flex:none;display:flex;justify-content:center}
+.gitrail::before{content:"";position:absolute;top:0;bottom:-9px;width:1.5px;background:var(--color-border-secondary)}
+.gitrow:last-child .gitrail::before{display:none}
+.gitdot{width:9px;height:9px;border-radius:50%;background:var(--color-background-primary);border:2px solid var(--wt-api);margin-top:3px;z-index:1}
+.gitrow.head .gitdot{background:var(--wt-api)}
+.gitmeta{min-width:0;flex:1;padding-bottom:9px}
+.gitmsg{color:var(--color-text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gitsub{font-family:var(--font-mono);font-size:10px;color:var(--color-text-tertiary);margin-top:1px}
+.gitref{display:inline-block;font-family:var(--font-mono);font-size:9px;background:var(--color-background-info);color:var(--color-text-info);border-radius:4px;padding:0 5px;margin-right:4px}
+
 .inspector{width:0;flex:none;border-left:0.5px solid var(--color-border-tertiary);overflow:hidden;transition:width .22s;background:var(--color-background-primary)}
 .inspector.open{width:340px}
 .inwrap{width:340px;height:100%;overflow:auto;padding:16px}
