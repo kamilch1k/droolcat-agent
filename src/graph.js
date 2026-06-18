@@ -407,7 +407,9 @@ export class GraphModel {
           ? c
           : Array.isArray(c) ? c.filter((b) => b && b.type === "text").map((b) => b.text || "").join("\n") : "";
         const trimmed = text.trim();
-        if (!trimmed || /^<(command-|local-command)/.test(trimmed)) continue; // skip slash-command / local-command noise
+        // skip harness-injected messages (slash commands, hooks, background-task
+        // notifications, system reminders) — they aren't real user prompts
+        if (!trimmed || /^<(command-|local-command|task-notification|system-reminder|user-prompt-submit-hook|bash-std|session-start|post-tool)/i.test(trimmed)) continue;
         // chain the next turn under the prior turn's tail (no result events here)
         if (this.turn) { this._lane("main").lastResultId = this.turn.lastId; this.turn = null; }
         this.beginTurn(clip2(trimmed, 2000), "main");

@@ -315,7 +315,9 @@ button.pbtag{cursor:pointer}
 .voicemode.s-nostt{--vm-accent:#b23b34}
 
 /* code cluster rendered on the same board (a region, not a separate view) */
-.clusterlabel{position:absolute;font-size:11px;font-weight:600;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.6px;background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:6px;padding:4px 9px;pointer-events:none}
+.clusterlabel{position:absolute;display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.6px;background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:6px;padding:4px 6px 4px 9px}
+.clusterlabel .cl-x{border:none;background:var(--color-background-secondary);color:var(--color-text-tertiary);width:18px;height:18px;border-radius:4px;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.clusterlabel .cl-x:hover{background:var(--color-background-tertiary);color:var(--color-text-danger)}
 
 /* board-helper lane: a distinct accent so the organizer reads differently */
 .t-lane.helper{background:linear-gradient(180deg,#fbf6ec,#f4ead4);border-color:#e3cf9f}

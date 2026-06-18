@@ -35,6 +35,7 @@ const canvas = new Canvas(
     onCompact: (laneId) => toggleCompact(laneId),// lane header "compact" button
     onUserCam: () => { autoFit = false; },       // user grabbed the camera -> stop following
     onLaneSelect: (laneId) => selectLane(laneId),// clicked a lane header -> make it active
+    onCloseAux: () => setView("agents"),         // closed the code cluster -> reflect in the tab
   }
 );
 
@@ -486,9 +487,12 @@ function renderCcList(list) {
   lastCcList = list || lastCcList;
   const host = $("cclist");
   host.innerHTML = "";
-  if (!lastCcList.length) { host.innerHTML = `<div class="empty-side">No Claude Code sessions found.</div>`; return; }
+  // hide throwaway greeting sessions ("hi", "hey", …) from the list — the real
+  // transcript files on disk are left untouched
+  const shown = lastCcList.filter((info) => !GREETING.test(info.title || ""));
+  if (!shown.length) { host.innerHTML = `<div class="empty-side">No Claude Code sessions${lastCcList.length ? " (greeting-only hidden)" : " found"}.</div>`; return; }
   const activeRealId = curChat() && curChat().observed && curChat().observed.realId;
-  for (const info of lastCcList) {
+  for (const info of shown) {
     const isLive = info.id === activeRealId;
     const d = document.createElement("div");
     d.className = "ccrow" + (isLive ? " live active" : "");

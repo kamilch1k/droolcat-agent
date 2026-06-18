@@ -33,7 +33,7 @@ function mdToHtml(s) {
 }
 
 export class Canvas {
-  constructor(els, { onSteer, onNewLane, onPersist, onCompact, onUserCam, onLaneSelect } = {}) {
+  constructor(els, { onSteer, onNewLane, onPersist, onCompact, onUserCam, onLaneSelect, onCloseAux } = {}) {
     this.world = els.world;
     this.edgesSvg = els.edges;
     this.viewport = els.viewport;
@@ -49,6 +49,7 @@ export class Canvas {
     this.onCompact = onCompact;
     this.onUserCam = onUserCam;       // user grabbed the camera -> stop auto-follow
     this.onLaneSelect = onLaneSelect; // clicked a lane header -> make it the active lane
+    this.onCloseAux = onCloseAux;     // closed the code cluster
 
     this.model = null;
     this.els = {};        // node id -> DOM el
@@ -408,8 +409,14 @@ export class Canvas {
       p.setAttribute("d", this._curve(a, b));
       p.classList.add("on");
     }
-    if (!this.clusterLabelEl) { this.clusterLabelEl = document.createElement("div"); this.clusterLabelEl.className = "clusterlabel"; this.world.appendChild(this.clusterLabelEl); }
-    this.clusterLabelEl.textContent = this.aux.headline || "code";
+    if (!this.clusterLabelEl) {
+      this.clusterLabelEl = document.createElement("div");
+      this.clusterLabelEl.className = "clusterlabel";
+      this.clusterLabelEl.innerHTML = `<span class="cl-t"></span><button class="cl-x" title="close code graph">×</button>`;
+      this.clusterLabelEl.querySelector(".cl-x").onclick = (e) => { e.stopPropagation(); this.setAux(null); this.onCloseAux && this.onCloseAux(); };
+      this.world.appendChild(this.clusterLabelEl);
+    }
+    this.clusterLabelEl.querySelector(".cl-t").textContent = this.aux.headline || "code";
     this.clusterLabelEl.style.left = ox + "px";
     this.clusterLabelEl.style.top = (oy - 30) + "px";
   }
@@ -513,19 +520,30 @@ export class Canvas {
 
   // ---- camera -----------------------------------------------------------
   _wireCamera(els) {
-    let dr = 0, sx, sy, cx0, cy0;
+    let dr = 0, moved = 0, sx, sy, cx0, cy0;
+    const release = () => { if (dr) { dr = 0; this.viewport.classList.remove("drag"); } };
     this.viewport.addEventListener("mousedown", (e) => {
-      dr = 1; this.viewport.classList.add("drag");
-      this.world.style.transition = "none"; // instant while dragging
-      this.onUserCam && this.onUserCam();
+      if (e.button !== 0) return;                                       // left button only
+      // let widgets handle their own drags/clicks (nodes, notes, menus, minimap, panels)
+      if (e.target.closest && e.target.closest(".cnode,.note,.ctxmenu,.minimap,.searchbar,.hudpanel,.clusterlabel")) return;
+      dr = 1; moved = 0;
+      this.world.style.transition = "none";                            // instant while dragging
       sx = e.clientX; sy = e.clientY; cx0 = this.cam.x; cy0 = this.cam.y;
     });
     window.addEventListener("mousemove", (e) => {
       if (!dr) return;
-      this.cam.x = cx0 + (e.clientX - sx); this.cam.y = cy0 + (e.clientY - sy); this._applyCam();
+      if (!(e.buttons & 1)) { release(); return; }                     // button no longer held -> stop (missed mouseup)
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if (!moved && Math.hypot(dx, dy) < 3) return;                    // tiny move = a click, not a pan
+      if (!moved) { moved = 1; this.viewport.classList.add("drag"); this.onUserCam && this.onUserCam(); }
+      this.cam.x = cx0 + dx; this.cam.y = cy0 + dy; this._applyCam();
     });
-    window.addEventListener("mouseup", () => { dr = 0; this.viewport.classList.remove("drag"); });
-    this.viewport.addEventListener("click", () => this.deselect());
+    window.addEventListener("mouseup", () => { this._panned = moved; release(); });
+    window.addEventListener("blur", release);                          // lose focus mid-drag -> release
+    this.viewport.addEventListener("click", (e) => {
+      if (this._panned) { this._panned = 0; return; }                  // a pan, not a click — keep selection
+      if (e.target === this.viewport || e.target === this.world || (e.target.tagName || "").toLowerCase() === "svg") this.deselect();
+    });
     this.viewport.addEventListener("wheel", (e) => {
       e.preventDefault();
       this.world.style.transition = "none"; // instant zoom under the cursor
