@@ -85,13 +85,34 @@ let hudOpen = false, hudTab = "logs";
 // can act on the board by ending a reply with a ```board JSON action block.
 const BOARD_HELPER_SYSTEM =
   "You are the Board Helper for Droolcat, a visual board where Claude Code conversations run as lanes of nodes. " +
-  "The user talks to you to ORGANIZE and DELEGATE work across the board. Reply briefly and conversationally. " +
-  "When work should be delegated, act on the board by ENDING your reply with a single fenced code block tagged `board` " +
+  "You help the user ORGANIZE, NAVIGATE and DELEGATE work on the board, and answer questions about what is on it. " +
+  "A snapshot of the current board is included at the top of each user message — use it to find things and to give board help. " +
+  "Reply briefly and conversationally. To act on the board, END your reply with a single fenced code block tagged `board` " +
   "containing a JSON array of actions. Supported actions: " +
-  '{"action":"spawnLane","title":"short label","prompt":"the first prompt to run in that new lane"} — start a new agent lane and run a prompt in it; ' +
+  '{"action":"spawnLane","title":"short label","prompt":"first prompt to run in a new lane"} — start a new agent lane and run a prompt in it; ' +
   '{"action":"note","text":"..."} — pin a sticky note; ' +
-  '{"action":"compact","lane":"main"} — collapse a lane. ' +
+  '{"action":"compact","lane":"main"} — collapse a lane; ' +
+  '{"action":"focus","query":"text to find and fly to"} (or {"action":"focus","lane":"main"}) — move the camera to a node/lane; ' +
+  '{"action":"search","query":"text"} — highlight every matching node; ' +
+  '{"action":"fit"} — fit the whole board in view; ' +
+  '{"action":"arrange"} — tidy the lanes back to a clean auto-layout. ' +
   "Only include the board block when actions are warranted, and put nothing after it. Keep each spawned prompt self-contained.";
+
+// a compact snapshot of the board, prepended to Board Helper prompts so it can
+// answer questions and navigate to things without seeing the screen
+function boardContext(s) {
+  const g = s.graph;
+  const lanes = g.laneOrder.filter((l) => l !== "board").map((l) => `${laneLabel(s, l)} (${g.lanes[l].turns} turn${g.lanes[l].turns === 1 ? "" : "s"})`);
+  const recent = g.nodes.filter((n) => n.type !== "lane").slice(-24).map((n) => {
+    if (n.type === "prompt") return `you: ${clip(n.text, 60)}`;
+    if (n.type === "say") return `claude: ${clip(n.text, 60)}`;
+    if (n.type === "tool") return `${n.title} ${n.file || ""}`.trim();
+    if (n.type === "result") return `result: ${clip(n.summary, 60)}`;
+    if (n.type === "agent") return `subagent: ${n.title}`;
+    return n.type;
+  });
+  return `[Board snapshot — lanes: ${lanes.join(", ") || "main"}.\nRecent activity:\n- ${recent.join("\n- ") || "(empty)"}\n]\n\n`;
+}
 
 const newId = () => "chat-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
 const curChat = () => (cur >= 0 ? sessions[cur] : null);
@@ -300,9 +321,12 @@ async function sendPrompt(text) {
   $("stopbtn").style.display = "";
   setConn("run", "working…");
   logs.push({ t: nowClock(), kind: "sys", text: `▶ turn in ${laneLabel(s, lane)} — ${clip(text, 48)}` });
+  // the Board Helper gets a fresh board snapshot prepended to its prompt (the
+  // visible prompt node still shows just the user's words)
+  const sendText = lane === "board" ? boardContext(s) + text : text;
   try {
     await t.invoke("start_session", {
-      sessionId: key, prompt: text, resume: s.laneClaudeId[lane] || null,
+      sessionId: key, prompt: sendText, resume: s.laneClaudeId[lane] || null,
       cwd: s.cwd || null, edits: !!s.edits,
       appendSystem: lane === "board" ? BOARD_HELPER_SYSTEM : null,
     });
@@ -427,10 +451,23 @@ function renderSessions() {
     const dot = running ? "var(--color-text-info)" : s.graph.turnCount ? "var(--color-text-success)" : "var(--color-border-secondary)";
     const d = document.createElement("div");
     d.className = "sessrow" + (i === cur ? " active" : "");
-    d.innerHTML = `<span class="aw-ic">${I.branch}</span><span class="t">${escapeHtml(s.title)}</span><span class="dot" style="background:${dot}"></span>`;
+    d.innerHTML = `<span class="aw-ic">${I.branch}</span><span class="t">${escapeHtml(s.title)}</span>${s.observed ? '<span class="obspill">live</span>' : ""}<span class="dot" style="background:${dot}"></span><button class="sessdel" title="delete chat">×</button>`;
     d.onclick = () => switchSession(i);
+    d.querySelector(".sessdel").onclick = (e) => { e.stopPropagation(); deleteSession(i); };
     h.appendChild(d);
   });
+}
+function deleteSession(i) {
+  const s = sessions[i]; if (!s) return;
+  if (!confirm(`Delete chat "${clip(s.title, 40)}"? This can't be undone.`)) return;
+  const wasCur = i === cur;
+  if (wasCur && s.observed) stopObserving();
+  if (runningChat === s.id) { runningChat = null; runningId = null; }
+  sessions.splice(i, 1);
+  if (!sessions.length) { cur = -1; newSession(); return; }
+  if (wasCur) { cur = Math.min(i, sessions.length - 1); switchSession(cur); }
+  else { if (i < cur) cur--; renderSessions(); }
+  scheduleSave();
 }
 const escapeHtml = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
@@ -657,6 +694,16 @@ function runBoardActions(actions, s) {
       s.notes.push(note); noteY += 92;
     } else if (a.action === "compact" && a.lane && s.graph.lanes[a.lane]) {
       s.graph.laneCompact[a.lane] = true;
+    } else if (a.action === "focus") {
+      if (a.lane && s.graph.lanes[a.lane] && s.graph.lanes[a.lane].headerId != null) canvas.zoomToNode(s.graph.lanes[a.lane].headerId, false);
+      else if (a.query) canvas.search(String(a.query));
+      logs.push({ t: nowClock(), kind: "sys", text: `◎ focus ${clip(a.query || a.lane || "", 24)}` });
+    } else if (a.action === "search" && a.query) {
+      canvas.search(String(a.query));
+    } else if (a.action === "fit") {
+      autoFit = false; canvas.fit();
+    } else if (a.action === "arrange") {
+      autoFit = false; canvas.arrange();
     }
   }
   if (canvas.model === s.graph) { canvas.setNotes(s.notes); canvas.sync(); }
@@ -756,6 +803,25 @@ function renderHud() {
   }
 }
 
+// ---- board search controls -----------------------------------------------
+
+function toggleSearch() {
+  const b = $("searchbar");
+  const show = b.style.display === "none";
+  if (show) { b.style.display = "flex"; $("findbtn").classList.add("active"); $("searchinput").focus(); $("searchinput").select(); if ($("searchinput").value) updateSearchCount(canvas.search($("searchinput").value)); }
+  else closeSearch();
+}
+function closeSearch() {
+  $("searchbar").style.display = "none";
+  $("findbtn").classList.remove("active");
+  canvas.clearSearch();
+}
+function updateSearchCount(n) {
+  const q = $("searchinput").value.trim();
+  const idx = canvas._searchIdx >= 0 ? canvas._searchIdx + 1 : 0;
+  $("scount").textContent = !q ? "" : (n ? `${idx}/${n}` : "0/0");
+}
+
 // ---- local persistence (saved like Claude Code sessions) ----------------
 
 const STORE = "droolcat.sessions.v1";
@@ -826,6 +892,16 @@ $("stopbtn").onclick = stopTurn;
 $("zin").onclick = () => { autoFit = false; canvas.zoom(1.15); };
 $("zout").onclick = () => { autoFit = false; canvas.zoom(1 / 1.15); };
 $("fit").onclick = () => canvas.fit();
+$("tolatest").onclick = () => canvas.goLatest();
+$("findbtn").onclick = () => toggleSearch();
+$("sclose").onclick = () => closeSearch();
+$("snext").onclick = () => updateSearchCount(canvas.nextHit(1));
+$("sprev").onclick = () => updateSearchCount(canvas.nextHit(-1));
+$("searchinput").addEventListener("input", () => updateSearchCount(canvas.search($("searchinput").value)));
+$("searchinput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") updateSearchCount(canvas.nextHit(e.shiftKey ? -1 : 1));
+  if (e.key === "Escape") closeSearch();
+});
 $("replay").onclick = () => { if (source === "sample") replaySampleTurn(); else replaySampleTurn(); };
 $("viewport").addEventListener("mousedown", () => { autoFit = false; });
 

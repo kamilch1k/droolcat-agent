@@ -54,6 +54,8 @@ export class Canvas {
     this.cam = { x: 120, y: 60, s: 1 };
     this.selected = null;
     this.selWt = null;
+    this.searchHits = [];   // node ids matching the current board search
+    this._searchIdx = -1;
 
     this._wireCamera(els);
     this._initBoard();     // right-click menu + minimap
@@ -96,13 +98,18 @@ export class Canvas {
       // compact must be applied BEFORE we measure heights, so the layout reflows
       const compact = compactOf(n);
       if (el._compact !== compact) { el.classList.toggle("compact", compact); el._compact = compact; }
-      const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.text || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.summary ? n.summary.length : 0}|${n.meta || ""}|${n.model || ""}|${n.mode || ""}|${n.ctx || ""}|${n.turns || 0}|${n.expanded ? 1 : 0}`;
+      const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.text || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.summary ? n.summary.length : 0}|${n.meta || ""}|${n.model || ""}|${n.mode || ""}|${n.ctx || ""}|${n.turns || 0}|${n.expanded ? 1 : 0}|${n.collapsed ? 1 : 0}|${this.searchHits && this.searchHits.includes(n.id) ? 1 : 0}`;
       if (el._sig !== sig) {
         el.innerHTML = this._card(n);
         el._sig = sig;
-        if (n.type === "result") {
+        if (n.type === "result" || n.type === "say") {
           const b = el.querySelector(".outbtn");
-          if (b) b.addEventListener("click", (e) => { e.stopPropagation(); n.expanded = !n.expanded; el._sig = null; this.sync(); });
+          if (b) b.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (n.type === "result") { const big = String(n.summary || "").length > 1500; n.collapsed = !(n.collapsed == null ? big : n.collapsed); }
+            else n.expanded = !n.expanded;
+            el._sig = null; this.sync();
+          });
         }
         if (n.type === "lane") {
           const c = el.querySelector(".lane-compact");
@@ -156,6 +163,7 @@ export class Canvas {
       el.classList.toggle("sel", n.id === this.selected);
       el.classList.toggle("touched", !!n.touched);
       el.classList.toggle("dim", !!(this.selWt && n.wt && n.wt !== this.selWt));
+      el.classList.toggle("hit", this.searchHits.length > 0 && this.searchHits.includes(n.id));
       this._pill(el, n);
       maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h);
     }
@@ -229,9 +237,12 @@ export class Canvas {
     if (n.type === "prompt")
       return `<div class="row"><span class="aw-ic">${I.user}</span><span class="lbl">You</span><span class="meta" style="margin-left:auto">turn ${n.turn || 1}</span></div>
         <div class="prompttext">${esc(n.text || "")}</div>`;
-    if (n.type === "say")
+    if (n.type === "say") {
+      const long = (n.text || "").length > 600; // ~ the 14-line clamp; only show when expanding reveals more
+      const btn = long ? `<button class="outbtn">${n.expanded ? "▴ less" : "▾ more"}</button>` : "";
       return `<div class="row"><span class="aw-ic">${I.orch}</span><span class="lbl">Claude</span></div>
-        <div class="saytext">${esc(n.text || "")}${n.status === "run" ? '<span class="caret"></span>' : ""}</div>`;
+        <div class="saytext${n.expanded ? " expanded" : ""}">${esc(n.text || "")}${n.status === "run" ? '<span class="caret"></span>' : ""}</div>${btn}`;
+    }
     if (n.type === "orch")
       return `<div class="row"><span class="aw-ic">${I.orch}</span><span class="lbl">${esc(n.title)}</span>${pill}</div>
         <div class="osub" style="margin-top:5px">${esc(n.sub || "")}</div>
@@ -254,11 +265,12 @@ export class Canvas {
         <div class="fmeta">${n.importedBy || 0} in · ${n.imports || 0} out</div>`;
     if (n.type === "result") {
       const full = String(n.summary || "");
-      // shown in full by default — only collapse genuinely big answers
-      const veryBig = full.length > 1100;
-      const collapsed = veryBig && !n.expanded;
-      const shown = collapsed ? full.slice(0, 700).replace(/\s+\S*$/, "") : full;
-      const btn = veryBig ? `<button class="outbtn">${n.expanded ? "▴ collapse" : "▾ expand full output"}</button>` : "";
+      // full by default; very big answers start collapsed. A toggle is always
+      // available once there's more than a few lines of output.
+      const veryBig = full.length > 1500;
+      const collapsed = n.collapsed == null ? veryBig : n.collapsed;
+      const shown = collapsed ? full.slice(0, 420).replace(/\s+\S*$/, "") : full;
+      const btn = full.length > 280 ? `<button class="outbtn">${collapsed ? "▾ expand full output" : "▴ collapse"}</button>` : "";
       return `<div class="rh"><span class="aw-ic" style="color:${n.donePill && n.donePill.k === "danger" ? "var(--color-text-danger)" : "var(--color-text-success)"}">${I.check}</span>
         <span class="lbl">${esc(n.title)}</span><span class="meta">${esc(n.meta || "")}</span></div>
         <div class="output">${mdToHtml(shown)}${collapsed ? "…" : ""}</div>${btn}`;
@@ -478,7 +490,7 @@ export class Canvas {
   zoom(f) { this.onUserCam && this.onUserCam(); this.cam.s = Math.min(2, Math.max(0.25, this.cam.s * f)); this._easeCam(); this._applyCam(); }
 
   // double-click a node -> ease in and center it
-  zoomToNode(id) {
+  zoomToNode(id, select = true) {
     const n = this.model && this.model.byId[id]; if (!n) return;
     const r = this.viewport.getBoundingClientRect(); if (r.width < 2) return;
     this.onUserCam && this.onUserCam();
@@ -487,8 +499,53 @@ export class Canvas {
     this.cam.x = r.width / 2 - (n.x + n.w / 2) * s;
     this.cam.y = r.height / 2 - (n.y + n.h / 2) * s;
     this._easeCam(); this._applyCam();
-    if (n.type !== "lane") this.select(id);
+    if (select && n.type !== "lane") this.select(id);
   }
+  // pan to a node at the current zoom (no scale change, no selection)
+  panToNode(id) {
+    const n = this.model && this.model.byId[id]; if (!n) return;
+    const r = this.viewport.getBoundingClientRect(); if (r.width < 2) return;
+    this.onUserCam && this.onUserCam();
+    const s = this.cam.s;
+    this.cam.x = r.width / 2 - (n.x + n.w / 2) * s;
+    this.cam.y = r.height / 2 - (n.y + n.h / 2) * s;
+    this._easeCam(); this._applyCam();
+  }
+  goLatest() { const m = this.model; if (m && m.nodes.length) this.panToNode(m.nodes[m.nodes.length - 1].id); }
+  goFirst() { const m = this.model; if (m && m.nodes.length) this.panToNode(m.nodes[0].id); }
+
+  // tidy the board: drop manual lane drags so lanes snap back to auto-layout
+  arrange() {
+    if (this.model) this.model.laneOffset = {};
+    this.sync();
+    this.fit();
+    this.onPersist && this.onPersist();
+  }
+
+  // ---- board search (text match -> highlight + fly between matches) ------
+  search(q) {
+    q = String(q || "").trim().toLowerCase();
+    const prev = this.searchHits.join(",");
+    this.searchHits = [];
+    if (q && this.model) {
+      for (const n of this.model.nodes) {
+        if (n.type === "lane") continue;
+        const hay = [n.title, n.text, n.file, n.summary, n.thought, n.role, n.model].filter(Boolean).join(" ").toLowerCase();
+        if (hay.includes(q)) this.searchHits.push(n.id);
+      }
+    }
+    this._searchIdx = -1;
+    if (this.searchHits.join(",") !== prev) this.sync(); else this.render();
+    if (this.searchHits.length) this.nextHit(1);
+    return this.searchHits.length;
+  }
+  nextHit(dir = 1) {
+    if (!this.searchHits.length) return 0;
+    this._searchIdx = (this._searchIdx + dir + this.searchHits.length) % this.searchHits.length;
+    this.zoomToNode(this.searchHits[this._searchIdx]);
+    return this.searchHits.length;   // caller shows `_searchIdx+1 / this`
+  }
+  clearSearch() { if (this.searchHits.length) { this.searchHits = []; this._searchIdx = -1; this.sync(); } }
 
   // instant, no-animation anchor for a brand-new conversation: pin the content's
   // top near the top of the viewport so the first node doesn't fly in and bounce
