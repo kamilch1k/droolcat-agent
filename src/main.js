@@ -300,6 +300,7 @@ async function sendPrompt(text) {
   if (s.observed) { stopObserving(); s.observed = null; s.graph.closeObservedTurn(); if (lastCcList.length) renderCcList(lastCcList); }
 
   s.graph.meta.mode = s.edits ? "bypass" : "ask"; // lane header reflects the permission mode
+  s.graph.meta.pickedModel = s.model || "";       // header shows the model you picked
   const firstEver = s.graph.turnCount === 0;
   s.graph.beginTurn(text, lane);
   if (s.title === "New chat") { s.title = clip(text, 40); }
@@ -891,6 +892,7 @@ function renderPalette(q) {
     d.dataset.i = i;
     d.innerHTML = `<span class="pi-l">${escapeHtml(it.label)}</span>${it.hint ? `<span class="pi-h">${escapeHtml(it.hint)}</span>` : ""}`;
     d.onmousedown = (e) => { e.preventDefault(); runPalette(i); };
+    d.onmousemove = () => { if (palSel !== i) { palSel = i; [...host.querySelectorAll(".palitem")].forEach((el) => el.classList.toggle("sel", +el.dataset.i === palSel)); } };
     host.appendChild(d);
   });
 }
@@ -976,7 +978,7 @@ document.addEventListener("click", (e) => {
 });
 // command palette
 window.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); $("palette").style.display === "none" ? openPalette() : closePalette(); }
+  if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); if (voice.active) return; $("palette").style.display === "none" ? openPalette() : closePalette(); }
   else if (e.key === "Escape" && $("palette").style.display !== "none") closePalette();
 });
 $("palinput").addEventListener("input", () => renderPalette($("palinput").value));

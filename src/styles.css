@@ -145,6 +145,7 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .cnode:hover .copybtn{opacity:.65}
 .copybtn:hover{opacity:1;background:var(--color-background-tertiary);color:var(--color-text-primary)}
 .copybtn.ok{opacity:1;color:var(--color-text-success)}
+.copybtn.fail{opacity:1;color:var(--color-text-danger)}
 .copybtn .aw-ic svg{width:13px;height:13px}
 .rh .copybtn{margin-left:6px}
 

@@ -13,6 +13,15 @@ const WT_FALLBACK = {
 };
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
+// drop a dangling (unclosed) code fence or bold span so a truncated preview
+// doesn't render literal ``` / ** when markdown is cut mid-block
+function balanceMd(s) {
+  s = String(s || "");
+  if ((s.match(/```/g) || []).length % 2) s = s.slice(0, s.lastIndexOf("```")).replace(/\s+$/, "");
+  if ((s.match(/\*\*/g) || []).length % 2) s = s.slice(0, s.lastIndexOf("**")).replace(/\s+$/, "");
+  return s;
+}
+
 // light, safe markdown -> HTML for Claude Code output (escape first, then format)
 function mdToHtml(s) {
   s = esc(String(s || ""));
@@ -236,8 +245,25 @@ export class Canvas {
       : n.type === "result" ? n.summary
       : n.detail && (n.detail.out || (n.detail.diff ? n.detail.diff.map((d) => d[1]).join("\n") : ""));
     txt = String(txt || n.text || "");
-    const ok = () => { if (!btn) return; const o = btn.innerHTML; btn.classList.add("ok"); btn.innerHTML = "✓"; setTimeout(() => { btn.innerHTML = o; btn.classList.remove("ok"); }, 1100); };
-    try { navigator.clipboard.writeText(txt).then(ok, ok); } catch { ok(); }
+    const flash = (cls, sym) => {
+      if (!btn) return;
+      if (btn._o == null) btn._o = btn.innerHTML;
+      btn.classList.remove("ok", "fail"); btn.classList.add(cls); btn.innerHTML = sym;
+      clearTimeout(btn._t); btn._t = setTimeout(() => { btn.innerHTML = btn._o; btn._o = null; btn.classList.remove("ok", "fail"); }, 1100);
+    };
+    const ok = () => flash("ok", "✓"), fail = () => flash("fail", "✕");
+    // hidden-textarea fallback for webviews without a (secure-context) clipboard API
+    const fallback = () => {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = txt; ta.style.position = "fixed"; ta.style.left = "-9999px"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        const r = document.execCommand("copy"); document.body.removeChild(ta); return r;
+      } catch { return false; }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(ok, () => (fallback() ? ok() : fail()));
+    } else { fallback() ? ok() : fail(); }
   }
 
   _card(n) {
@@ -300,7 +326,7 @@ export class Canvas {
       // available once there's more than a few lines of output.
       const veryBig = full.length > 1500;
       const collapsed = n.collapsed == null ? veryBig : n.collapsed;
-      const shown = collapsed ? full.slice(0, 420).replace(/\s+\S*$/, "") : full;
+      const shown = collapsed ? balanceMd(full.slice(0, 420).replace(/\s+\S*$/, "")) : full;
       const btn = full.length > 280 ? `<button class="outbtn">${collapsed ? "▾ expand full output" : "▴ collapse"}</button>` : "";
       return `<div class="rh"><span class="aw-ic" style="color:${n.donePill && n.donePill.k === "danger" ? "var(--color-text-danger)" : "var(--color-text-success)"}">${I.check}</span>
         <span class="lbl">${esc(n.title)}</span><span class="meta">${esc(n.meta || "")}</span>${this._copyBtn()}</div>

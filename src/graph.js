@@ -83,6 +83,17 @@ function diffFromEdit(input) {
   if (input.old_string != null || input.new_string != null) return diffPair(input.old_string, input.new_string);
   return null;
 }
+// total lines added / removed by an Edit or MultiEdit (blank-inclusive, uncapped)
+function editCounts(input) {
+  if (!input) return [0, 0];
+  const pairs = Array.isArray(input.edits) ? input.edits : [{ old_string: input.old_string, new_string: input.new_string }];
+  let ad = 0, rm = 0;
+  for (const e of pairs) {
+    if (e.new_string != null) ad += String(e.new_string).split("\n").length;
+    if (e.old_string != null) rm += String(e.old_string).split("\n").length;
+  }
+  return [ad, rm];
+}
 function diffPair(oldS, newS) {
   const rows = [];
   String(oldS || "").split("\n").forEach((l) => l !== "" && rows.push(["rm", "- " + l]));
@@ -180,7 +191,8 @@ export class GraphModel {
     });
     if (lane.lastResultId) this._edge(lane.lastResultId, p.id, { turn: true });
     if (header) {
-      if (this.meta.model) header.model = this.meta.model;
+      if (this.meta.pickedModel) header.model = this.meta.pickedModel;
+      else if (this.meta.model) header.model = this.meta.model;
       if (this.meta.mode) header.mode = this.meta.mode;
       header.status = "run"; header.turns = lane.turns;
     }
@@ -267,7 +279,7 @@ export class GraphModel {
     const p = this.byId[this.turn.anchorId];
     if (p && evt.model) p.model = evt.model;
     const h = this.byId[this._lane(this.turn.laneId).headerId];
-    if (h && evt.model) h.model = evt.model;
+    if (h && evt.model && !this.meta.pickedModel) h.model = evt.model;
   }
 
   _assistant(evt) {
@@ -317,10 +329,10 @@ export class GraphModel {
       node.status = "done";
       const isErr = block.is_error === true;
       if (node.type === "tool") {
-        const diff = node.kind === "edit" ? diffFromEdit(node.detail.input) : null;
+        const diff = (node.kind === "edit" && !isErr) ? diffFromEdit(node.detail.input) : null;
         if (diff && diff.length) {
           node.detail.diff = diff;
-          const ad = diff.filter((d) => d[0] === "ad").length, rm = diff.filter((d) => d[0] === "rm").length;
+          const [ad, rm] = editCounts(node.detail.input);
           node.resultChip = `+${ad} −${rm}`;
         } else {
           node.detail.out = clip2(out, 1600);
@@ -420,7 +432,12 @@ export class GraphModel {
     }
     for (const n of this.nodes) if (n.status === "run" && !pending.has(n.id)) n.status = "done";
     this.running = false;
-    if (this.turn) this.turn.streamSay = null;
+    if (this.turn) {
+      this.turn.streamSay = null;
+      // observed sessions have no result event — populate the lane gauge here
+      const h = this.byId[this._lane(this.turn.laneId).headerId];
+      if (h && this.turn.ctxNow) { h.ctxTokens = this.turn.ctxNow; h.ctx = fmtTokens(this.turn.ctxNow) || ""; }
+    }
   }
 
   // hand-off: close an open observed turn the way ingestTranscript chains turns
