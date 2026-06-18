@@ -75,6 +75,8 @@ let syncQueued = false;
 let lastErr = "";         // last stderr line — shown if a turn ends with no result
 let runQueue = [];        // Board-Helper-spawned lane runs, executed one at a time
 let queueReturnLane = null; // { chatId, lane } — lane to restore once the queue drains
+let observeTimer = null;  // live-tail poll for the active observed Claude Code session
+let lastCcList = [];      // last-rendered Claude Code session list
 let logs = [];            // rolling activity log for the HUD panel
 let hudOpen = false, hudTab = "logs";
 
@@ -123,6 +125,8 @@ function switchSession(i) {
   canvas.fit();
   scheduleSave();
   pump();   // resume any Board-Helper-queued runs waiting on this chat
+  stopObserving();
+  if (sessions[i].observed) startObserving(sessions[i]);  // live-tail the real session
 }
 
 // start a new independent agent lane in the current chat — spawns a "waiting
@@ -267,6 +271,10 @@ async function sendPrompt(text) {
   if (!curChat()) newSession();
   const s = curChat();
   const lane = s.activeLane || "main";
+
+  // continuing an observed session hands it off to Droolcat: stop tailing and
+  // let this turn resume the real Claude session (laneClaudeId.main is its id)
+  if (s.observed) { stopObserving(); s.observed = null; if (lastCcList.length) renderCcList(lastCcList); }
 
   s.graph.meta.mode = s.edits ? "bypass" : "ask"; // lane header reflects the permission mode
   const firstEver = s.graph.turnCount === 0;
@@ -423,6 +431,108 @@ function renderSessions() {
   });
 }
 const escapeHtml = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+// ---- observe real Claude Code sessions (~/.claude/projects) ---------------
+
+async function loadCcSessions() {
+  const t = await getTauri();
+  if (!t) return;   // browser build keeps the "desktop app only" hint
+  try {
+    const list = await t.invoke("list_claude_sessions", { limit: 40 });
+    renderCcList(list || []);
+  } catch (e) { $("cclist").innerHTML = `<div class="empty-side">Couldn't read sessions.</div>`; }
+}
+function renderCcList(list) {
+  lastCcList = list || lastCcList;
+  const host = $("cclist");
+  host.innerHTML = "";
+  if (!lastCcList.length) { host.innerHTML = `<div class="empty-side">No Claude Code sessions found.</div>`; return; }
+  const activeRealId = curChat() && curChat().observed && curChat().observed.realId;
+  for (const info of lastCcList) {
+    const isLive = info.id === activeRealId;
+    const d = document.createElement("div");
+    d.className = "ccrow" + (isLive ? " live active" : "");
+    d.innerHTML = `<span class="ccdot"></span><div class="ccmeta"><div class="cct">${escapeHtml(info.title || "session")}</div>
+      <div class="ccsub">${escapeHtml(projectBase(info.cwd || info.project))} · ${relTime(info.mtimeMs)}</div></div>`;
+    d.onclick = () => observeSession(info);
+    host.appendChild(d);
+  }
+}
+function projectBase(p) {
+  const parts = String(p || "").replace(/\\/g, "/").split("/").filter(Boolean);
+  return parts.slice(-1)[0] || "session";
+}
+function relTime(ms) {
+  if (!ms) return "";
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+function parseJsonl(lines) {
+  const out = [];
+  for (const l of (lines || [])) { try { out.push(JSON.parse(l)); } catch {} }
+  return out;
+}
+// keep only the last `n` real user-prompt turns from a parsed transcript
+function trimToLastTurns(objs, n) {
+  const idxs = [];
+  for (let i = 0; i < objs.length; i++) {
+    const o = objs[i];
+    if (o && o.type === "user" && o.message && !o.isSidechain) {
+      const c = o.message.content;
+      if (!(Array.isArray(c) && c.some((b) => b && b.type === "tool_result"))) idxs.push(i);
+    }
+  }
+  return idxs.length <= n ? objs : objs.slice(idxs[idxs.length - n]);
+}
+
+// open (or reuse) a chat that mirrors a real Claude Code session and live-tails it
+async function observeSession(info) {
+  const t = await getTauri(); if (!t) return;
+  let s = sessions.find((x) => x.observed && x.observed.realId === info.id);
+  if (!s) {
+    s = {
+      id: newId(), title: info.title || "Claude Code", graph: new GraphModel(), cwd: info.cwd || "",
+      edits: false, notes: [], activeLane: "main", laneClaudeId: { main: info.id },
+      observed: { file: info.file, realId: info.id, offset: 0 },
+    };
+    sessions.push(s);
+  }
+  switchSession(sessions.indexOf(s));   // switchSession arms observation for observed chats
+}
+
+async function startObserving(s) {
+  stopObserving();
+  const t = await getTauri();
+  if (!t || !s || !s.observed) return;
+  try {
+    const tail = await t.invoke("read_session_tail", { path: s.observed.file, maxLines: 160, maxBytes: 700000 });
+    s.graph.reset();
+    s.graph.ingestTranscript(trimToLastTurns(parseJsonl(tail.lines), 4));
+    s.observed.offset = tail.offset;
+    if (canvas.model === s.graph) { canvas.sync(); autoFit = true; canvas.fit(); }
+    renderSessions();
+    if (lastCcList.length) renderCcList(lastCcList);
+  } catch (e) { console.warn("observe tail failed", e); setConn("err", "couldn't read that session"); }
+  observeTimer = setInterval(() => pollObserve(s), 1500);
+}
+function stopObserving() { if (observeTimer) { clearInterval(observeTimer); observeTimer = null; } }
+
+async function pollObserve(s) {
+  if (!s || !s.observed || curChat() !== s || runningId) return;  // pause while a turn streams
+  const t = await getTauri(); if (!t) return;
+  try {
+    const r = await t.invoke("read_session_since", { path: s.observed.file, offset: s.observed.offset });
+    s.observed.offset = r.offset;
+    if (r.lines && r.lines.length) {
+      s.graph.ingestTranscript(parseJsonl(r.lines));
+      if (canvas.model === s.graph) scheduleSync();
+      scheduleSave();
+    }
+  } catch (e) { /* file rotated/removed — let the next poll retry */ }
+}
 
 function setConn(cls, label) {
   const el = $("conn");
@@ -644,7 +754,7 @@ function saveSessions() {
       cur,
       sessions: sessions.map((s) => ({
         id: s.id, title: s.title, cwd: s.cwd, edits: s.edits, activeLane: s.activeLane,
-        laneClaudeId: s.laneClaudeId, notes: s.notes, graph: s.graph.toJSON(),
+        laneClaudeId: s.laneClaudeId, notes: s.notes, observed: s.observed || null, graph: s.graph.toJSON(),
       })),
     };
     localStorage.setItem(STORE, JSON.stringify(data));
@@ -659,7 +769,8 @@ function loadSessions() {
     sessions = d.sessions.map((s) => ({
       id: s.id, title: s.title || "chat", cwd: s.cwd || "", edits: s.edits !== false,
       activeLane: s.activeLane || "main", laneClaudeId: s.laneClaudeId || {},
-      notes: Array.isArray(s.notes) ? s.notes : [], graph: new GraphModel().fromJSON(s.graph),
+      notes: Array.isArray(s.notes) ? s.notes : [], observed: s.observed || null,
+      graph: new GraphModel().fromJSON(s.graph),
     }));
     cur = Math.min(Math.max(0, d.cur || 0), sessions.length - 1);
     return true;
@@ -682,6 +793,7 @@ function fireSend() {
   sendPrompt(v);
 }
 $("newsession").onclick = () => newSession();
+$("ccrefresh").onclick = () => loadCcSessions();
 $("folder").addEventListener("change", () => { const s = curChat(); if (s) { s.cwd = $("folder").value.trim(); scheduleSave(); } });
 $("allowedits").addEventListener("change", () => { const s = curChat(); if (s) { s.edits = $("allowedits").checked; refreshLaneBar(); scheduleSave(); } });
 $("lanebtn").onclick = (e) => { e.stopPropagation(); closePlusMenu(); toggleLaneMenu(); };
@@ -710,12 +822,15 @@ if (loadSessions()) switchSession(cur >= 0 ? cur : 0);  // restore saved chats
 else newSession();                                       // or start fresh
 window.addEventListener("beforeunload", saveSessions);
 wireBridge();
+loadCcSessions();   // populate the Claude Code session list (desktop app only)
 
 // dev/preview-only test hook (gated to the Vite port; inert in the packaged app)
 if (location.port === "1420") {
   window.__droolcat = {
     parseBoardBlock, runBoardActions, curChat: () => curChat(), canvas,
     logs: () => logs, runQueue: () => runQueue, voice,
+    parseJsonl, trimToLastTurns,
+    testIngest: (objs) => { const g = new GraphModel(); g.ingestTranscript(objs); return { nodes: g.nodes.length, turns: g.turnCount, types: g.nodes.reduce((a, n) => { a[n.type] = (a[n.type] || 0) + 1; return a; }, {}), edges: g.edges.length }; },
     reset: () => { sessions.length = 0; cur = -1; localStorage.removeItem(STORE); location.reload(); },
   };
 }

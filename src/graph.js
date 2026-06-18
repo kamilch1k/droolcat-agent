@@ -364,6 +364,44 @@ export class GraphModel {
     this.running = false;
   }
 
+  // ---- observing a real Claude Code session (its .jsonl transcript) -------
+  // The persisted transcript has no `result` events, so turns are chained under
+  // the previous turn's tail instead of a result node. Tool calls + their
+  // results, the assistant's words, and each user prompt render like a live
+  // conversation. Everything on disk is already complete, so markIdle() clears
+  // the "running" state after each batch.
+  ingestTranscript(objs) {
+    if (!Array.isArray(objs)) return;
+    for (const o of objs) {
+      if (!o || o.isSidechain || !o.message) continue;
+      if (o.type === "user") {
+        const c = o.message.content;
+        const isToolResult = Array.isArray(c) && c.some((b) => b && b.type === "tool_result");
+        if (isToolResult) { if (this.turn) this.apply({ type: "user", message: o.message }); continue; }
+        const text = typeof c === "string"
+          ? c
+          : Array.isArray(c) ? c.filter((b) => b && b.type === "text").map((b) => b.text || "").join("\n") : "";
+        const trimmed = text.trim();
+        if (!trimmed || /^<(command-|local-command)/.test(trimmed)) continue; // skip slash-command / local-command noise
+        // chain the next turn under the prior turn's tail (no result events here)
+        if (this.turn) { this._lane("main").lastResultId = this.turn.lastId; this.turn = null; }
+        this.beginTurn(clip2(trimmed, 2000), "main");
+      } else if (o.type === "assistant") {
+        if (!this.turn) this.beginTurn("(session)", "main");
+        this.apply({ type: "assistant", message: o.message });
+      }
+    }
+    this.markIdle();
+  }
+
+  // observed transcript lines are already complete on disk — clear run state
+  // but keep the turn cursor open so later appended lines continue it
+  markIdle() {
+    for (const n of this.nodes) if (n.status === "run") n.status = "done";
+    this.running = false;
+    if (this.turn) { this.turn.streamSay = null; this.turn.streamBlocks = {}; }
+  }
+
   stats() {
     let running = 0;
     for (const n of this.nodes) if ((n.type === "tool" || n.type === "agent") && n.status === "run") running++;

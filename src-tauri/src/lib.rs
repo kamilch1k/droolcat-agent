@@ -235,6 +235,142 @@ fn scan_code_graph(cwd: String) -> Result<codegraph::CodeGraph, String> {
     Ok(codegraph::scan(&cwd))
 }
 
+// ---- observe real Claude Code sessions (~/.claude/projects/*/*.jsonl) -----
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CcSession {
+    id: String,
+    file: String,
+    cwd: String,
+    title: String,
+    project: String,
+    mtime_ms: u64,
+    size: u64,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TailOut {
+    lines: Vec<String>,
+    offset: u64,
+}
+
+fn claude_projects_dir() -> Option<PathBuf> {
+    let home = std::env::var("USERPROFILE").ok().or_else(|| std::env::var("HOME").ok())?;
+    let p = Path::new(&home).join(".claude").join("projects");
+    if p.is_dir() { Some(p) } else { None }
+}
+
+// cheap JSON-string extractor: value of "key":"..." with basic unescaping
+fn json_str(line: &str, key: &str) -> Option<String> {
+    let i = line.find(key)? + key.len();
+    let mut out = String::new();
+    let mut chars = line[i..].chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => { if let Some(n) = chars.next() { out.push(match n { 'n' => '\n', 't' => '\t', '"' => '"', '\\' => '\\', '/' => '/', o => o }); } }
+            '"' => break,
+            _ => out.push(c),
+        }
+    }
+    Some(out)
+}
+
+// read the head of a transcript to derive a title + working dir
+fn head_meta(path: &Path) -> (String, String) {
+    let f = match std::fs::File::open(path) { Ok(f) => f, Err(_) => return (String::new(), String::new()) };
+    let reader = BufReader::new(f);
+    let (mut title, mut first_user, mut cwd) = (String::new(), String::new(), String::new());
+    for line in reader.lines().take(80).map_while(Result::ok) {
+        if cwd.is_empty() { if let Some(c) = json_str(&line, "\"cwd\":\"") { cwd = c; } }
+        if title.is_empty() { if let Some(t) = json_str(&line, "\"aiTitle\":\"") { title = t; } }
+        if first_user.is_empty()
+            && line.contains("\"type\":\"user\"")
+            && line.contains("\"role\":\"user\"")
+            && !line.contains("tool_result")
+        {
+            if let Some(c) = json_str(&line, "\"content\":\"") { first_user = c.chars().take(90).collect(); }
+        }
+        if !title.is_empty() && !cwd.is_empty() { break; }
+    }
+    let t = if !title.is_empty() { title } else if !first_user.is_empty() { first_user } else { "session".into() };
+    (t.trim().to_string(), cwd)
+}
+
+/// List the user's recent Claude Code sessions (newest first).
+#[tauri::command]
+fn list_claude_sessions(limit: Option<usize>) -> Result<Vec<CcSession>, String> {
+    let dir = match claude_projects_dir() { Some(d) => d, None => return Ok(vec![]) };
+    let mut files: Vec<(PathBuf, u64, u64)> = vec![];
+    for proj in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
+        let pp = proj.path();
+        if !pp.is_dir() { continue; }
+        for f in std::fs::read_dir(&pp).map_err(|e| e.to_string())?.flatten() {
+            let fp = f.path();
+            if fp.extension().map(|e| e == "jsonl").unwrap_or(false) {
+                if let Ok(md) = f.metadata() {
+                    let mt = md.modified().ok()
+                        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                        .map(|d| d.as_millis() as u64).unwrap_or(0);
+                    if md.len() > 0 { files.push((fp, mt, md.len())); }
+                }
+            }
+        }
+    }
+    files.sort_by(|a, b| b.1.cmp(&a.1));
+    files.truncate(limit.unwrap_or(40));
+    let mut out = vec![];
+    for (path, mt, size) in files {
+        let (title, cwd) = head_meta(&path);
+        let id = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let project = path.parent().and_then(|p| p.file_name()).map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        out.push(CcSession { id, file: path.to_string_lossy().to_string(), cwd, title, project, mtime_ms: mt, size });
+    }
+    Ok(out)
+}
+
+/// Read only the TAIL of a transcript (last `max_lines` / `max_bytes`), plus the
+/// current file size as the offset for incremental follow-up reads.
+#[tauri::command]
+fn read_session_tail(path: String, max_lines: Option<usize>, max_bytes: Option<u64>) -> Result<TailOut, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+    let len = f.metadata().map_err(|e| e.to_string())?.len();
+    let mb = max_bytes.unwrap_or(700_000).min(len);
+    let start = len - mb;
+    f.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
+    let mut buf = vec![0u8; mb as usize];
+    f.read_exact(&mut buf).map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&buf);
+    let mut lines: Vec<String> = text.split('\n').map(|s| s.to_string()).collect();
+    if start > 0 && !lines.is_empty() { lines.remove(0); } // drop the partial first line
+    lines.retain(|l| !l.trim().is_empty());
+    let ml = max_lines.unwrap_or(180);
+    if lines.len() > ml { lines = lines.split_off(lines.len() - ml); }
+    Ok(TailOut { lines, offset: len })
+}
+
+/// Read newly-appended lines since a byte offset (for live tailing). Only
+/// consumes up to the last newline so a partially-written line isn't returned.
+#[tauri::command]
+fn read_session_since(path: String, offset: u64) -> Result<TailOut, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+    let len = f.metadata().map_err(|e| e.to_string())?.len();
+    if len <= offset { return Ok(TailOut { lines: vec![], offset: len }); }
+    f.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
+    let mut buf = vec![0u8; (len - offset) as usize];
+    f.read_exact(&mut buf).map_err(|e| e.to_string())?;
+    let consume = match buf.iter().rposition(|&b| b == b'\n') {
+        Some(i) => i + 1,
+        None => return Ok(TailOut { lines: vec![], offset }),
+    };
+    let text = String::from_utf8_lossy(&buf[..consume]);
+    let lines: Vec<String> = text.split('\n').map(|s| s.to_string()).filter(|l| !l.trim().is_empty()).collect();
+    Ok(TailOut { lines, offset: offset + consume as u64 })
+}
+
 #[tauri::command]
 fn claude_path() -> String {
     find_claude()
@@ -248,6 +384,9 @@ pub fn run() {
             start_session,
             stop_session,
             scan_code_graph,
+            list_claude_sessions,
+            read_session_tail,
+            read_session_since,
             claude_path
         ])
         .run(tauri::generate_context!())
