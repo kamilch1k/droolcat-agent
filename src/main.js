@@ -17,17 +17,22 @@ $("ic-plus").innerHTML = I.plus;
 $("ic-up").innerHTML = I.up;
 $("ic-play").innerHTML = I.play;
 $("ic-empty").innerHTML = I.graph;
+$("ic-newlane").innerHTML = I.plus;
+$("ic-mic").innerHTML = I.mic;
 
 const canvas = new Canvas(
   {
     world: $("world"), edges: $("edges"), viewport: $("viewport"),
     inspector: $("inspector"), inwrap: $("inwrap"), headpill: $("headpill"),
-    target: $("target"), empty: $("empty"), zl: $("zl"),
+    target: null, empty: $("empty"), zl: $("zl"),
   },
   {
     onSteer: (_node, text) => sendPrompt(text),  // "follow up" from the inspector
     onNewLane: () => newLane(),                  // right-click "new agent lane"
     onPersist: () => scheduleSave(),             // notes moved/edited -> save
+    onCompact: (laneId) => toggleCompact(laneId),// lane header "compact" button
+    onUserCam: () => { autoFit = false; },       // user grabbed the camera -> stop following
+    onLaneSelect: (laneId) => selectLane(laneId),// clicked a lane header -> make it active
   }
 );
 
@@ -45,6 +50,7 @@ let source = "live";      // 'live' | 'sample'
 let tauri = null;
 let autoFit = true;       // follow the conversation until the user pans/zooms
 let fitPending = false;   // do a full fit on the next sync (turn start / switch)
+let homePending = false;  // anchor a brand-new conversation at the top (no bounce)
 let syncQueued = false;
 let lastErr = "";         // last stderr line — shown if a turn ends with no result
 
@@ -72,19 +78,50 @@ function switchSession(i) {
   $("folder").value = sessions[i].cwd || "";
   $("allowedits").checked = sessions[i].edits !== false;
   autoFit = true;
+  closeLaneMenu();
+  refreshLaneBar();
   renderSessions();
   canvas.sync();
   canvas.fit();
   scheduleSave();
 }
 
-// start a new independent agent lane in the current chat — the next prompt
-// begins it as a separate column on the board
+// start a new independent agent lane in the current chat — spawns a "waiting
+// for input" header node (a separate column on the board) that the next prompt
+// flows into. The lane can be dragged around by its header.
 function newLane() {
-  const s = curChat(); if (!s) return;
-  s.activeLane = "lane" + (s.graph.laneOrder.length + 1) + "-" + Math.random().toString(36).slice(2, 5);
+  const s = curChat(); if (!s) { newSession(); return; }
+  const laneId = "lane" + (s.graph.laneOrder.length + 1) + "-" + Math.random().toString(36).slice(2, 5);
+  s.graph.beginLane(laneId, { model: s.graph.meta.model || "claude", mode: s.edits ? "bypass" : "ask" });
+  s.activeLane = laneId;
+  if (view !== "agents") setView("agents");
+  if (canvas.model !== s.graph) canvas.setModel(s.graph);
+  autoFit = false;                 // keep the user's view; just reveal the lane
+  canvas.sync();
+  canvas.fit();
+  refreshLaneBar();
   setConn(tauri ? "live" : "", "new agent lane — type a prompt to start it");
   $("prompt").focus();
+  scheduleSave();
+}
+
+// switch which lane the prompt bar targets (drop-up / clicking a lane header)
+function selectLane(laneId) {
+  const s = curChat(); if (!s) return;
+  s.activeLane = laneId;
+  closeLaneMenu();
+  refreshLaneBar();
+  $("prompt").focus();
+  scheduleSave();
+}
+
+// toggle a lane's compact view (collapse its tool/say nodes to dense lines)
+function toggleCompact(laneId) {
+  const s = curChat(); if (!s) return;
+  const g = s.graph;
+  g.laneCompact = g.laneCompact || {};
+  g.laneCompact[laneId] = !g.laneCompact[laneId];
+  canvas.sync();   // re-measure heights so the layout reflows around the change
   scheduleSave();
 }
 
@@ -135,6 +172,7 @@ function endTurn(ok) {
   runningId = null; runningChat = null;
   $("stopbtn").style.display = "none";
   setConn(tauri ? "live" : "", tauri ? "ready" : "browser (sample only)");
+  refreshLaneBar();
   scheduleSave();
 }
 
@@ -152,7 +190,8 @@ function scheduleSync() {
     canvas.sync(); // canvas.sync() measures card heights + lays out the agent graph itself
     renderSessions();
     if (autoFit) {
-      if (fitPending) { fitPending = false; canvas.fit(); }
+      if (homePending) { homePending = false; canvas.home(); }      // first turn: anchor at top
+      else if (fitPending) { fitPending = false; canvas.fit(); }
       else canvas.follow();   // pan to the newest node at constant zoom (no jumpy refit)
     }
   };
@@ -171,13 +210,18 @@ async function sendPrompt(text) {
   const s = curChat();
   const lane = s.activeLane || "main";
 
+  s.graph.meta.mode = s.edits ? "bypass" : "ask"; // lane header reflects the permission mode
+  const firstEver = s.graph.turnCount === 0;
   s.graph.beginTurn(text, lane);
   if (s.title === "New chat") { s.title = clip(text, 40); }
   $("sesstitle").textContent = s.title;
   if (view !== "agents") setView("agents");
   if (canvas.model !== s.graph) canvas.setModel(s.graph);
-  autoFit = true; fitPending = s.graph.turnCount === 1; // fit the first turn; follow later turns
+  autoFit = true;
+  homePending = firstEver;                 // anchor the very first conversation at the top
+  fitPending = false;
   scheduleSync();
+  refreshLaneBar();
   scheduleSave();
 
   const t = await getTauri();
@@ -221,11 +265,12 @@ async function replaySampleTurn() {
   if (view !== "agents") setView("agents");
   s.graph.beginTurn("Refactor auth and add tests across the 3 packages");
   if (s.title === "New chat") { s.title = "Auth refactor"; $("sesstitle").textContent = s.title; }
-  autoFit = true; fitPending = s.graph.turnCount === 1;
+  autoFit = true; homePending = s.graph.turnCount === 1; fitPending = false;
+  refreshLaneBar();
   setConn("", "replaying…");
   let i = 0;
   const step = () => {
-    if (i >= events.length) { s.graph.endTurn(true); bump(s.graph); setConn("", "sample"); return; }
+    if (i >= events.length) { s.graph.endTurn(true); bump(s.graph); refreshLaneBar(); setConn("", "sample"); return; }
     s.graph.apply(events[i++]);
     bump(s.graph);
     const e = events[i - 1];
@@ -319,6 +364,88 @@ function setConn(cls, label) {
   el.textContent = label;
 }
 
+// ---- prompt-bar lane controls (drop-up selector + mode/model/mic) --------
+
+const laneWrap = () => document.querySelector(".lanewrap");
+function laneLabel(s, laneId) {
+  if (laneId === "main") return "main";
+  const wt = s.graph.wtMap && s.graph.wtMap[laneId];
+  return (wt && wt.name) || laneId;
+}
+function laneColor(s, laneId) {
+  const wt = s.graph.wtMap && s.graph.wtMap[laneId];
+  return (wt && wt.color) || "var(--wt-main)";
+}
+function shortModel(m) {
+  if (!m) return "claude";
+  const s = String(m).toLowerCase();
+  if (s.includes("opus")) return "opus";
+  if (s.includes("sonnet")) return "sonnet";
+  if (s.includes("haiku")) return "haiku";
+  return clip(m, 12);
+}
+function refreshLaneBar() {
+  const s = curChat();
+  if (!s) { $("lanename").textContent = "main"; $("laneSw").style.background = "var(--wt-main)"; return; }
+  const lane = s.activeLane || "main";
+  $("lanename").textContent = laneLabel(s, lane);
+  $("laneSw").style.background = laneColor(s, lane);
+  const bypass = s.edits !== false;
+  const mode = $("pbmode");
+  mode.textContent = bypass ? "bypass" : "ask";
+  mode.classList.toggle("bypass", bypass);
+  mode.title = bypass ? "bypass permissions — edits run without asking (click to require asking)" : "ask permissions (click to bypass)";
+  $("pbmodel").textContent = shortModel(s.graph.meta.model);
+  if (laneWrap() && laneWrap().classList.contains("open")) buildLaneMenu();
+}
+function buildLaneMenu() {
+  const s = curChat(); const wrap = $("lanemenu"); if (!s || !wrap) return;
+  const lanes = []; const seen = new Set();
+  for (const id of ["main", ...s.graph.laneOrder, s.activeLane]) {
+    if (!id || seen.has(id)) continue; seen.add(id); lanes.push(id);
+  }
+  let h = `<div class="mhead">Lanes</div>`;
+  for (const id of lanes) {
+    const lane = s.graph.lanes[id];
+    const turns = lane ? lane.turns : 0;
+    const sub = id === s.activeLane ? "active" : (turns ? turns + " turn" + (turns === 1 ? "" : "s") : "empty");
+    h += `<div class="lanemenuitem${id === s.activeLane ? " active" : ""}" data-lane="${id}">
+      <span class="sw" style="background:${laneColor(s, id)}"></span>
+      <span class="nm">${escapeHtml(laneLabel(s, id))}</span><span class="sub">${sub}</span></div>`;
+  }
+  h += `<div class="lanemenuitem add" data-new="1"><span class="aw-ic">${I.plus}</span>New agent lane</div>`;
+  wrap.innerHTML = h;
+  wrap.querySelectorAll(".lanemenuitem[data-lane]").forEach((it) =>
+    it.onclick = (e) => { e.stopPropagation(); selectLane(it.dataset.lane); });
+  const add = wrap.querySelector(".lanemenuitem[data-new]");
+  if (add) add.onclick = (e) => { e.stopPropagation(); closeLaneMenu(); newLane(); };
+}
+function toggleLaneMenu() {
+  const w = laneWrap(); if (!w) return;
+  w.classList.toggle("open");
+  if (w.classList.contains("open")) buildLaneMenu();
+}
+function closeLaneMenu() { const w = laneWrap(); if (w) w.classList.remove("open"); }
+
+// voice dictation via the WebView's Web Speech API (graceful no-op if absent)
+let recog = null, recording = false;
+function toggleMic() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { setConn("", "voice input isn't available in this build"); return; }
+  if (recording) { try { recog && recog.stop(); } catch {} return; }
+  try {
+    recog = new SR(); recog.lang = "en-US"; recog.interimResults = true; recog.continuous = false;
+    const base = $("prompt").value.trim();
+    recog.onresult = (e) => {
+      let t = ""; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+      $("prompt").value = (base ? base + " " : "") + t.trim();
+    };
+    recog.onend = () => { recording = false; $("pbmic").classList.remove("on"); setConn(tauri ? "live" : "", tauri ? "ready" : "browser (sample only)"); };
+    recog.onerror = () => { recording = false; $("pbmic").classList.remove("on"); setConn("", "voice input error"); };
+    recog.start(); recording = true; $("pbmic").classList.add("on"); setConn("run", "listening…");
+  } catch { setConn("", "voice input isn't available in this build"); }
+}
+
 // ---- local persistence (saved like Claude Code sessions) ----------------
 
 const STORE = "droolcat.sessions.v1";
@@ -369,7 +496,12 @@ function fireSend() {
 }
 $("newsession").onclick = () => newSession();
 $("folder").addEventListener("change", () => { const s = curChat(); if (s) { s.cwd = $("folder").value.trim(); scheduleSave(); } });
-$("allowedits").addEventListener("change", () => { const s = curChat(); if (s) { s.edits = $("allowedits").checked; scheduleSave(); } });
+$("allowedits").addEventListener("change", () => { const s = curChat(); if (s) { s.edits = $("allowedits").checked; refreshLaneBar(); scheduleSave(); } });
+$("lanebtn").onclick = (e) => { e.stopPropagation(); toggleLaneMenu(); };
+$("pbnew").onclick = () => newLane();
+$("pbmic").onclick = () => toggleMic();
+$("pbmode").onclick = () => { const s = curChat(); if (!s) return; s.edits = !s.edits; $("allowedits").checked = s.edits; refreshLaneBar(); scheduleSave(); };
+document.addEventListener("click", (e) => { const w = laneWrap(); if (w && w.classList.contains("open") && !w.contains(e.target)) closeLaneMenu(); });
 $("stopbtn").onclick = stopTurn;
 $("zin").onclick = () => { autoFit = false; canvas.zoom(1.15); };
 $("zout").onclick = () => { autoFit = false; canvas.zoom(1 / 1.15); };

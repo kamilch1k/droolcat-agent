@@ -31,10 +31,13 @@ export const SIZES = {
   agent: { w: 196, h: 104 },
   tool: { w: 168, h: 74 },
   result: { w: 440, h: 176 },
+  lane: { w: 244, h: 92 },
 };
 
 // subagents (Task) get a cycling accent so parallel branches read distinctly
 const SUB_PALETTE = ["var(--wt-frontend)", "var(--wt-api)", "var(--wt-tests)", "#b6478f", "#3a86c8"];
+// agent lanes (parallel conversations in one board) each get their own accent
+const LANE_PALETTE = ["var(--wt-frontend)", "var(--wt-api)", "var(--wt-tests)", "#b6478f", "#3a86c8", "#c7711b"];
 
 function kindOf(tool) { return KIND_BY_TOOL[tool] || "read"; }
 function titleOf(tool) { return TITLE_BY_TOOL[tool] || tool.toLowerCase(); }
@@ -100,8 +103,10 @@ export class GraphModel {
     this.wtMap = { main: { name: "main", color: "var(--wt-main)" } };
     // a chat can hold multiple independent conversation LANES (parallel agents
     // in one board). Each lane keeps its own tail so turns chain within it.
-    this.lanes = {};            // laneId -> { lastResultId, turns }
+    this.lanes = {};            // laneId -> { lastResultId, turns, headerId }
     this.laneOrder = [];
+    this.laneOffset = {};       // laneId -> { dx, dy }  (user-dragged lane position)
+    this.laneCompact = {};      // laneId -> bool        (compact view: hide tool detail)
     this.turn = null;           // current (active) turn's cursor; carries laneId
     this.turnCount = 0;
     this.running = false;
@@ -109,8 +114,37 @@ export class GraphModel {
   }
 
   _lane(laneId) {
-    if (!this.lanes[laneId]) { this.lanes[laneId] = { lastResultId: null, turns: 0 }; this.laneOrder.push(laneId); }
+    if (!this.lanes[laneId]) { this.lanes[laneId] = { lastResultId: null, turns: 0, headerId: null }; this.laneOrder.push(laneId); }
     return this.lanes[laneId];
+  }
+
+  // every lane gets a header card at its top — it shows model/mode/context,
+  // doubles as the "waiting for input" node for a freshly-spawned lane, and is
+  // the drag handle for moving the whole lane around the board.
+  ensureLaneHeader(laneId = "main", opts = {}) {
+    const lane = this._lane(laneId);
+    if (lane.headerId != null && this.byId[lane.headerId]) return this.byId[lane.headerId];
+    const isMain = laneId === "main";
+    const idx = this.laneOrder.indexOf(laneId);
+    if (!isMain && !this.wtMap[laneId]) {
+      this.wtMap[laneId] = { name: "lane " + (idx + 1), color: LANE_PALETTE[idx % LANE_PALETTE.length] };
+    }
+    const h = this._add({
+      type: "lane", lane: laneId, wt: isMain ? "main" : laneId,
+      title: isMain ? "main lane" : "Agent lane " + (idx + 1),
+      status: "wait", model: opts.model || this.meta.model || "claude",
+      mode: opts.mode || this.meta.mode || "bypass", ctx: "", turns: 0, detail: {},
+    });
+    lane.headerId = h.id;
+    if (lane.lastResultId == null) lane.lastResultId = h.id; // first prompt chains under the header
+    return h;
+  }
+
+  // create a lane that is waiting for its first prompt (right-click → new lane)
+  beginLane(laneId, opts = {}) {
+    const h = this.ensureLaneHeader(laneId, opts);
+    h.status = "wait";
+    return h;
   }
 
   _add(node) {
@@ -133,12 +167,20 @@ export class GraphModel {
     // close any still-open turn so the chain stays well-formed
     if (this.turn && !this.turn.resultId) this.endTurn(true);
     const lane = this._lane(laneId);
+    // give new lanes a header; don't retro-add one to pre-existing chats
+    let header = lane.headerId != null ? this.byId[lane.headerId] : null;
+    if (!header && lane.turns === 0) header = this.ensureLaneHeader(laneId);
     this.turnCount++; lane.turns++;
     const p = this._add({
       type: "prompt", title: "You", text: prompt, turn: lane.turns, lane: laneId,
       status: "done", detail: {},
     });
     if (lane.lastResultId) this._edge(lane.lastResultId, p.id, { turn: true });
+    if (header) {
+      if (this.meta.model) header.model = this.meta.model;
+      if (this.meta.mode) header.mode = this.meta.mode;
+      header.status = "run"; header.turns = lane.turns;
+    }
     this.turn = { laneId, anchorId: p.id, lastId: p.id, byToolUse: {}, frontier: new Set([p.id]), tokAcc: 0, resultId: null, streamSay: null, streamBlocks: {}, usedPartials: false };
     this.running = true;
     return p;
@@ -221,6 +263,8 @@ export class GraphModel {
     this.meta.sessionId = evt.session_id || this.meta.sessionId;
     const p = this.byId[this.turn.anchorId];
     if (p && evt.model) p.model = evt.model;
+    const h = this.byId[this._lane(this.turn.laneId).headerId];
+    if (h && evt.model) h.model = evt.model;
   }
 
   _assistant(evt) {
@@ -301,7 +345,10 @@ export class GraphModel {
     const leaves = [...t.frontier].filter((id) => id !== res.id);
     (leaves.length ? leaves : [t.anchorId]).forEach((id) => this._edge(id, res.id, { funnel: true }));
     t.resultId = res.id;
-    this._lane(t.laneId).lastResultId = res.id;
+    const lane = this._lane(t.laneId);
+    lane.lastResultId = res.id;
+    const h = this.byId[lane.headerId];
+    if (h) { h.status = "idle"; h.turns = lane.turns; h.ctx = fmtTokens(t.tokAcc) || ""; }
     this.running = false;
   }
 
@@ -327,6 +374,7 @@ export class GraphModel {
     return {
       nodes: this.nodes, edges: this.edges, meta: this.meta, wtMap: this.wtMap,
       lanes: this.lanes, laneOrder: this.laneOrder,
+      laneOffset: this.laneOffset, laneCompact: this.laneCompact,
       turnCount: this.turnCount, subCount: this.subCount, seq: this.seq,
     };
   }
@@ -339,6 +387,8 @@ export class GraphModel {
     this.wtMap = d.wtMap || this.wtMap;
     this.lanes = d.lanes || {};
     this.laneOrder = d.laneOrder || Object.keys(this.lanes);
+    this.laneOffset = d.laneOffset || {};
+    this.laneCompact = d.laneCompact || {};
     this.turnCount = d.turnCount || 0;
     this.subCount = d.subCount || 0;
     this.seq = d.seq || this.nodes.length;
@@ -423,6 +473,7 @@ export function layout(model) {
   let acc = 0;
   for (let d = 0; d <= maxDepth; d++) { yOf[d] = acc; acc += (rowH[d] || SIZES.tool.h) + VGAP; }
 
+  const lo = model.laneOffset || {};
   let minX = Infinity, maxX = -Infinity, maxY = 0;
   nodes.forEach((n) => {
     const sz = SIZES[n.type] || SIZES.tool;
@@ -430,6 +481,8 @@ export function layout(model) {
     if (!(typeof n.h === "number" && n.h)) n.h = sz.h; // keep measured height if set
     n.x = (x[n.id] || 0) + COL / 2 - n.w / 2;
     n.y = yOf[depth[n.id]] || 0;
+    const off = lo[n.lane];                            // user-dragged lane position
+    if (off) { n.x += off.dx || 0; n.y += off.dy || 0; }
     minX = Math.min(minX, n.x); maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h);
   });
   if (!isFinite(minX)) { minX = 0; maxX = 600; }

@@ -17,6 +17,8 @@ export const I = {
   branch: SVG('<circle cx="5" cy="4" r="1.5"/><circle cx="5" cy="12" r="1.5"/><circle cx="11" cy="6" r="1.5"/><path d="M5 5.5v5M5 9.2c0-2.2 1.4-3 5.8-3.2"/>'),
   msg: SVG('<path d="M2.8 4.4h10.4v6.2H7l-3 2.4v-2.4H2.8z"/>'),
   plus: SVG('<path d="M8 3v10M3 8h10"/>'),
+  mic: SVG('<rect x="6" y="2.4" width="4" height="7" rx="2"/><path d="M4 8a4 4 0 0 0 8 0M8 12v1.6M6 13.6h4"/>'),
+  compact: SVG('<path d="M4 6.2l4 3 4-3M4 10.2l4 3 4-3"/>'),
   up: `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12.5V4M4.5 7.5L8 4l3.5 3.5"/></svg>`,
   play: SVG('<path d="M5 3.5l7 4.5-7 4.5z" fill="currentColor" stroke="none"/>'),
   // big empty-state glyph

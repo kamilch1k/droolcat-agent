@@ -47,8 +47,19 @@
         <label class="cbtoggle"><input type="checkbox" id="allowedits" checked/> allow edits</label>
       </div>
       <div class="promptbar">
-        <div class="target" id="target"><span class="sw" style="background:var(--wt-main)"></span>session</div>
-        <input class="pinput" id="prompt" placeholder="Message Claude — each turn continues this chat…"/>
+        <div class="lanewrap">
+          <div class="lanemenu" id="lanemenu"></div>
+          <button class="lanebtn" id="lanebtn">
+            <span class="sw" id="laneSw" style="background:var(--wt-main)"></span>
+            <span class="lanenm" id="lanename">main</span>
+            <span class="lanechev">▴</span>
+          </button>
+        </div>
+        <button class="pbicon" id="pbnew" title="new agent lane"><span class="aw-ic" id="ic-newlane"></span></button>
+        <input class="pinput" id="prompt" placeholder="Message Claude — each turn continues this lane…"/>
+        <button class="pbicon" id="pbmic" title="voice dictation"><span class="aw-ic" id="ic-mic"></span></button>
+        <button class="pbtag" id="pbmode" title="permission mode — click to toggle">bypass</button>
+        <span class="pbtag muted" id="pbmodel" title="model">claude</span>
         <button class="sendbtn" id="send"><span class="aw-ic" id="ic-up"></span></button>
       </div>
     </div>

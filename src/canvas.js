@@ -24,19 +24,22 @@ function mdToHtml(s) {
 }
 
 export class Canvas {
-  constructor(els, { onSteer, onNewLane, onPersist } = {}) {
+  constructor(els, { onSteer, onNewLane, onPersist, onCompact, onUserCam, onLaneSelect } = {}) {
     this.world = els.world;
     this.edgesSvg = els.edges;
     this.viewport = els.viewport;
     this.inspector = els.inspector;
     this.inwrap = els.inwrap;
     this.headpill = els.headpill;
-    this.target = els.target;
+    this.target = els.target || null;
     this.empty = els.empty;
     this.zl = els.zl;
     this.onSteer = onSteer;
     this.onNewLane = onNewLane;
     this.onPersist = onPersist;
+    this.onCompact = onCompact;
+    this.onUserCam = onUserCam;       // user grabbed the camera -> stop auto-follow
+    this.onLaneSelect = onLaneSelect; // clicked a lane header -> make it the active lane
 
     this.model = null;
     this.els = {};        // node id -> DOM el
@@ -71,24 +74,34 @@ export class Canvas {
       if (!live.has(a) || !live.has(b)) { this.edgeEls[k].remove(); delete this.edgeEls[k]; }
     }
 
+    const compactOf = (n) => !!(m.laneCompact && m.laneCompact[n.lane]) && (n.type === "tool" || n.type === "say" || n.type === "agent");
     for (const n of m.nodes) {
       let el = this.els[n.id];
       if (!el) {
         el = document.createElement("div");
-        el.addEventListener("click", (e) => { e.stopPropagation(); this.select(n.id); });
+        if (n.type === "lane") this._wireLane(el, n);
+        else el.addEventListener("click", (e) => { e.stopPropagation(); this.select(n.id); });
+        el.addEventListener("dblclick", (e) => { e.stopPropagation(); this.zoomToNode(n.id); });
         this.world.appendChild(el);
         this.els[n.id] = el;
       }
       // base class is set once; render() owns the state classes (show/running/sel/dim)
       const base = "cnode t-" + n.type + (n.kind ? " k-" + n.kind : "");
       if (el._base !== base) { el.className = base; el._base = base; }
-      const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.text || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.summary ? n.summary.length : 0}|${n.meta || ""}|${n.model || ""}|${n.expanded ? 1 : 0}`;
+      // compact must be applied BEFORE we measure heights, so the layout reflows
+      const compact = compactOf(n);
+      if (el._compact !== compact) { el.classList.toggle("compact", compact); el._compact = compact; }
+      const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.text || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.summary ? n.summary.length : 0}|${n.meta || ""}|${n.model || ""}|${n.mode || ""}|${n.ctx || ""}|${n.turns || 0}|${n.expanded ? 1 : 0}`;
       if (el._sig !== sig) {
         el.innerHTML = this._card(n);
         el._sig = sig;
         if (n.type === "result") {
           const b = el.querySelector(".outbtn");
           if (b) b.addEventListener("click", (e) => { e.stopPropagation(); n.expanded = !n.expanded; el._sig = null; this.sync(); });
+        }
+        if (n.type === "lane") {
+          const c = el.querySelector(".lane-compact");
+          if (c) c.addEventListener("click", (e) => { e.stopPropagation(); this.onCompact && this.onCompact(n.lane); });
         }
       }
     }
@@ -189,6 +202,21 @@ export class Canvas {
 
   _card(n) {
     const pill = `<span class="aw-pill pill"></span>`;
+    if (n.type === "lane") {
+      const modeK = n.mode === "bypass" ? "p-warning" : "";
+      const modeL = n.mode === "bypass" ? "bypass perms" : "ask perms";
+      const st = n.status === "wait"
+        ? `<span class="aw-pill p-info">waiting for input</span>`
+        : n.status === "run"
+          ? `<span class="aw-pill p-info">running…</span>`
+          : `<span class="aw-pill p-success">${n.turns || 0} turn${(n.turns || 0) === 1 ? "" : "s"}</span>`;
+      const ctx = n.ctx ? `<span class="lane-ctx">${esc(n.ctx)} ctx</span>` : "";
+      return `<div class="lane-head"><span class="sw" style="background:${this._wtColor(n.wt)}"></span>
+        <span class="lbl">${esc(n.title || "Agent lane")}</span>
+        <button class="lane-compact" title="compact this lane">${I.compact}</button></div>
+        <div class="lane-meta"><span class="lane-model">${esc(n.model || "claude")}</span><span class="aw-pill ${modeK}">${modeL}</span>${ctx}</div>
+        <div class="lane-status">${st}</div>`;
+    }
     if (n.type === "prompt")
       return `<div class="row"><span class="aw-ic">${I.user}</span><span class="lbl">You</span><span class="meta" style="margin-left:auto">turn ${n.turn || 1}</span></div>
         <div class="prompttext">${esc(n.text || "")}</div>`;
@@ -217,10 +245,11 @@ export class Canvas {
         <div class="fmeta">${n.importedBy || 0} in · ${n.imports || 0} out</div>`;
     if (n.type === "result") {
       const full = String(n.summary || "");
-      const long = full.length > 300;
-      const collapsed = long && !n.expanded;
-      const shown = collapsed ? full.slice(0, 300).replace(/\s+\S*$/, "") : full;
-      const btn = long ? `<button class="outbtn">${n.expanded ? "▴ collapse" : "▾ expand full output"}</button>` : "";
+      // shown in full by default — only collapse genuinely big answers
+      const veryBig = full.length > 1100;
+      const collapsed = veryBig && !n.expanded;
+      const shown = collapsed ? full.slice(0, 700).replace(/\s+\S*$/, "") : full;
+      const btn = veryBig ? `<button class="outbtn">${n.expanded ? "▴ collapse" : "▾ expand full output"}</button>` : "";
       return `<div class="rh"><span class="aw-ic" style="color:${n.donePill && n.donePill.k === "danger" ? "var(--color-text-danger)" : "var(--color-text-success)"}">${I.check}</span>
         <span class="lbl">${esc(n.title)}</span><span class="meta">${esc(n.meta || "")}</span></div>
         <div class="output">${mdToHtml(shown)}${collapsed ? "…" : ""}</div>${btn}`;
@@ -294,13 +323,13 @@ export class Canvas {
       const t = this.inwrap.querySelector("#steertext").value.trim();
       if (t && this.onSteer) this.onSteer(n, t);
     };
-    this.target.innerHTML = `<span class="sw" style="background:${this._wtColor(n.wt)}"></span>${esc(n.title)}`;
+    if (this.target) this.target.innerHTML = `<span class="sw" style="background:${this._wtColor(n.wt)}"></span>${esc(n.title)}`;
     this.render();
   }
   deselect() {
     this.selected = null;
     this.inspector.classList.remove("open");
-    this.target.innerHTML = `<span class="sw" style="background:var(--wt-main)"></span>session`;
+    if (this.target) this.target.innerHTML = `<span class="sw" style="background:var(--wt-main)"></span>session`;
     this.render();
   }
   _input(input) {
@@ -320,6 +349,7 @@ export class Canvas {
     this.viewport.addEventListener("mousedown", (e) => {
       dr = 1; this.viewport.classList.add("drag");
       this.world.style.transition = "none"; // instant while dragging
+      this.onUserCam && this.onUserCam();
       sx = e.clientX; sy = e.clientY; cx0 = this.cam.x; cy0 = this.cam.y;
     });
     window.addEventListener("mousemove", (e) => {
@@ -331,6 +361,7 @@ export class Canvas {
     this.viewport.addEventListener("wheel", (e) => {
       e.preventDefault();
       this.world.style.transition = "none"; // instant zoom under the cursor
+      this.onUserCam && this.onUserCam();
       const r = this.viewport.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
       const f = e.deltaY < 0 ? 1.1 : 1 / 1.1, ns = Math.min(2, Math.max(0.25, this.cam.s * f));
       this.cam.x = mx - (mx - this.cam.x) * (ns / this.cam.s);
@@ -345,7 +376,34 @@ export class Canvas {
     if (this.zl) this.zl.textContent = Math.round(this.cam.s * 100) + "%";
     this._renderMinimap();
   }
-  zoom(f) { this.cam.s = Math.min(2, Math.max(0.25, this.cam.s * f)); this._easeCam(); this._applyCam(); }
+  zoom(f) { this.onUserCam && this.onUserCam(); this.cam.s = Math.min(2, Math.max(0.25, this.cam.s * f)); this._easeCam(); this._applyCam(); }
+
+  // double-click a node -> ease in and center it
+  zoomToNode(id) {
+    const n = this.model && this.model.byId[id]; if (!n) return;
+    const r = this.viewport.getBoundingClientRect(); if (r.width < 2) return;
+    this.onUserCam && this.onUserCam();
+    const s = Math.min(1.7, Math.max(0.7, (r.width * 0.55) / n.w));
+    this.cam.s = s;
+    this.cam.x = r.width / 2 - (n.x + n.w / 2) * s;
+    this.cam.y = r.height / 2 - (n.y + n.h / 2) * s;
+    this._easeCam(); this._applyCam();
+    if (n.type !== "lane") this.select(id);
+  }
+
+  // instant, no-animation anchor for a brand-new conversation: pin the content's
+  // top near the top of the viewport so the first node doesn't fly in and bounce
+  home() {
+    const m = this.model; if (!m || !m.nodes.length) return;
+    const r = this.viewport.getBoundingClientRect(); if (r.width < 2) return;
+    let minX = 1e9, minY = 1e9, maxX = -1e9;
+    for (const n of m.nodes) { minX = Math.min(minX, n.x); minY = Math.min(minY, n.y); maxX = Math.max(maxX, n.x + n.w); }
+    this.cam.s = 1;
+    this.cam.x = r.width / 2 - ((minX + maxX) / 2) * this.cam.s;
+    this.cam.y = 72 - minY * this.cam.s;
+    this.world.style.transition = "none";
+    this._applyCam();
+  }
   fit() {
     const m = this.model; if (!m || !m.nodes.length) return;
     let a = 1e9, b = 1e9, c = -1e9, d = -1e9;
@@ -361,18 +419,61 @@ export class Canvas {
     this._applyCam();
   }
 
-  // pan (no zoom change) so the newest node stays in view — like a chat
-  // scrolling down as it works, instead of a jumpy refit on every event
+  // pan (no zoom change) so the newest node stays in view — like a chat log.
+  // While the whole conversation fits, its TOP is anchored (no drift); once it
+  // overflows, the newest node is pinned near the bottom. It never recenters to
+  // the middle, so the first node can't bounce top -> middle -> top.
   follow() {
     const m = this.model; if (!m || !m.nodes.length) return;
     const r = this.viewport.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) return;
-    const n = m.nodes[m.nodes.length - 1];
     const s = this.cam.s;
-    this.cam.x = r.width / 2 - (n.x + n.w / 2) * s;
-    this.cam.y = r.height * 0.6 - (n.y + n.h / 2) * s;
+    const newest = m.nodes[m.nodes.length - 1];
+    let minY = 1e9, maxY = -1e9;
+    for (const n of m.nodes) { minY = Math.min(minY, n.y); maxY = Math.max(maxY, n.y + n.h); }
+    const topPad = 72, botPad = 56;
+    if ((maxY - minY) * s <= r.height - topPad - botPad) {
+      this.cam.y = topPad - minY * s;                              // whole convo fits: anchor its top
+    } else {
+      this.cam.y = (r.height - botPad) - (newest.y + newest.h) * s; // overflow: pin newest near bottom
+    }
+    // x: only move if the newest node would be off-screen horizontally
+    const nx = (newest.x + newest.w / 2) * s + this.cam.x;
+    if (nx < 90 || nx > r.width - 90) this.cam.x = r.width / 2 - (newest.x + newest.w / 2) * s;
     this._easeCam();
     this._applyCam();
+  }
+
+  // drag an entire lane around the board via its header card
+  _wireLane(el, n) {
+    el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (el._moved) { el._moved = false; return; }   // a drag, not a click
+      this.onLaneSelect && this.onLaneSelect(n.lane);
+    });
+    el.addEventListener("mousedown", (e) => {
+      if (e.target.closest(".lane-compact")) return;   // let the compact button click through
+      e.stopPropagation();
+      this.onUserCam && this.onUserCam();
+      const m = this.model, lane = n.lane;
+      m.laneOffset = m.laneOffset || {};
+      const o = (m.laneOffset[lane] = m.laneOffset[lane] || { dx: 0, dy: 0 });
+      const sx = e.clientX, sy = e.clientY, odx = o.dx, ody = o.dy, sc = this.cam.s;
+      let moved = false;
+      el.classList.add("dragging");
+      const mv = (ev) => {
+        if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return;
+        moved = true; el._moved = true;
+        o.dx = odx + (ev.clientX - sx) / sc; o.dy = ody + (ev.clientY - sy) / sc;
+        layout(m); this.render();
+      };
+      const up = () => {
+        window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up);
+        el.classList.remove("dragging");
+        if (moved) this.onPersist && this.onPersist();
+      };
+      window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
+    });
   }
 
   // ---- Miro board: sticky notes ----------------------------------------
