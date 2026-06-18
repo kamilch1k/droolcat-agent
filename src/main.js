@@ -943,6 +943,36 @@ function loadSessions() {
 }
 function clip(s, n) { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
+// A chat counts as a throwaway greeting if every prompt is a bare hello AND it
+// did no real work (no tools/subagents). The website chat survives — it starts
+// with "hi" but has tool calls and a real prompt.
+const GREETING = /^\s*(hi+|h?ey+|he?llo+|yo+|sup|heya|hiya|howdy|test+|good\s*(morning|afternoon|evening)|gm|gn)[\s!.,?]*$/i;
+function isGreetingOnly(s) {
+  const g = s.graph;
+  if (g.nodes.some((n) => n.type === "tool" || n.type === "agent")) return false;
+  const prompts = g.nodes.filter((n) => n.type === "prompt");
+  if (!prompts.length) return false;                       // empty/new chat — leave it
+  return prompts.every((p) => GREETING.test(p.text || ""));
+}
+// one-time cleanup (you asked to delete the "hi" chats); guarded so it never
+// repeats and can't surprise-delete greeting chats you make later
+function pruneGreetingChats() {
+  const FLAG = "droolcat.pruned.greetings.v1";
+  try { if (localStorage.getItem(FLAG)) return 0; } catch {}
+  const curId = cur >= 0 && sessions[cur] ? sessions[cur].id : null;
+  const before = sessions.length;
+  sessions = sessions.filter((s) => !isGreetingOnly(s));
+  const removed = before - sessions.length;
+  if (removed) {
+    cur = curId ? sessions.findIndex((x) => x.id === curId) : 0;
+    if (cur < 0) cur = 0;
+    saveSessions();
+    console.log(`[droolcat] removed ${removed} greeting-only chat(s)`);
+  }
+  try { localStorage.setItem(FLAG, "1"); } catch {}
+  return removed;
+}
+
 // ---- toolbar / prompt events --------------------------------------------
 
 document.querySelectorAll("#srcsel button").forEach((b) =>
@@ -1007,8 +1037,12 @@ $("viewport").addEventListener("mousedown", () => { autoFit = false; });
 
 // ---- boot ---------------------------------------------------------------
 
-if (loadSessions()) switchSession(cur >= 0 ? cur : 0);  // restore saved chats
-else newSession();                                       // or start fresh
+if (loadSessions()) {
+  const pruned = pruneGreetingChats();                   // one-time: remove the "hi" chats
+  if (!sessions.length) newSession();
+  else switchSession(Math.min(Math.max(0, cur), sessions.length - 1));
+  if (pruned) setConn(tauri ? "live" : "", `removed ${pruned} greeting-only chat${pruned > 1 ? "s" : ""}`);
+} else newSession();                                      // or start fresh
 window.addEventListener("beforeunload", saveSessions);
 wireBridge();
 loadCcSessions();   // populate the Claude Code session list (desktop app only)
@@ -1019,6 +1053,8 @@ if (location.port === "1420") {
     parseBoardBlock, runBoardActions, curChat: () => curChat(), canvas,
     logs: () => logs, runQueue: () => runQueue, voice,
     parseJsonl, trimToLastTurns, newGraph: () => new GraphModel(),
+    isGreetingOnly: (g) => isGreetingOnly({ graph: g }),
+    pruneTest: (sess) => { sessions = sess; cur = 0; try { localStorage.removeItem("droolcat.pruned.greetings.v1"); } catch {} const removed = pruneGreetingChats(); return { removed, remaining: sessions.map((s) => s.title) }; },
     testIngest: (objs) => { const g = new GraphModel(); g.ingestTranscript(objs); return { nodes: g.nodes.length, turns: g.turnCount, types: g.nodes.reduce((a, n) => { a[n.type] = (a[n.type] || 0) + 1; return a; }, {}), edges: g.edges.length }; },
     reset: () => { sessions.length = 0; cur = -1; localStorage.removeItem(STORE); location.reload(); },
   };
