@@ -277,22 +277,28 @@ fn json_str(line: &str, key: &str) -> Option<String> {
     Some(out)
 }
 
-// read the head of a transcript to derive a title + working dir
+// read the head of a transcript to derive a title + working dir. Reads at most
+// 256 KB so a single multi-MB tool-result line can never blow up memory.
 fn head_meta(path: &Path) -> (String, String) {
+    use std::io::Read;
     let f = match std::fs::File::open(path) { Ok(f) => f, Err(_) => return (String::new(), String::new()) };
-    let reader = BufReader::new(f);
+    let mut buf = Vec::new();
+    let _ = f.take(256 * 1024).read_to_end(&mut buf);
+    let text = String::from_utf8_lossy(&buf);
     let (mut title, mut first_user, mut cwd) = (String::new(), String::new(), String::new());
-    for line in reader.lines().take(80).map_while(Result::ok) {
-        if cwd.is_empty() { if let Some(c) = json_str(&line, "\"cwd\":\"") { cwd = c; } }
-        if title.is_empty() { if let Some(t) = json_str(&line, "\"aiTitle\":\"") { title = t; } }
+    for line in text.split('\n').take(80) {
+        if cwd.is_empty() { if let Some(c) = json_str(line, "\"cwd\":\"") { cwd = c; } }
+        if title.is_empty() { if let Some(t) = json_str(line, "\"aiTitle\":\"") { title = t; } }
         if first_user.is_empty()
             && line.contains("\"type\":\"user\"")
             && line.contains("\"role\":\"user\"")
             && !line.contains("tool_result")
         {
-            if let Some(c) = json_str(&line, "\"content\":\"") { first_user = c.chars().take(90).collect(); }
+            // string content ("content":"…") or array content ([{ "text":"…" }])
+            let got = json_str(line, "\"content\":\"").or_else(|| json_str(line, "\"text\":\""));
+            if let Some(c) = got { first_user = c.chars().take(90).collect(); }
         }
-        if !title.is_empty() && !cwd.is_empty() { break; }
+        if !cwd.is_empty() && !title.is_empty() { break; } // best title found
     }
     let t = if !title.is_empty() { title } else if !first_user.is_empty() { first_user } else { "session".into() };
     (t.trim().to_string(), cwd)
@@ -340,19 +346,23 @@ fn read_session_tail(path: String, max_lines: Option<usize>, max_bytes: Option<u
     let mb = max_bytes.unwrap_or(700_000).min(len);
     let start = len - mb;
     f.seek(SeekFrom::Start(start)).map_err(|e| e.to_string())?;
-    let mut buf = vec![0u8; mb as usize];
-    f.read_exact(&mut buf).map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&buf);
+    let mut buf = Vec::new();
+    f.take(mb).read_to_end(&mut buf).map_err(|e| e.to_string())?; // tolerant if the file shrank
+    // consume only up to the last newline so `offset` lands on a line boundary
+    // (keeps the tail->since seam UTF-8-safe and re-reads a partial final line)
+    let consume = buf.iter().rposition(|&b| b == b'\n').map(|i| i + 1).unwrap_or(0);
+    let text = String::from_utf8_lossy(&buf[..consume]);
     let mut lines: Vec<String> = text.split('\n').map(|s| s.to_string()).collect();
     if start > 0 && !lines.is_empty() { lines.remove(0); } // drop the partial first line
     lines.retain(|l| !l.trim().is_empty());
     let ml = max_lines.unwrap_or(180);
     if lines.len() > ml { lines = lines.split_off(lines.len() - ml); }
-    Ok(TailOut { lines, offset: len })
+    Ok(TailOut { lines, offset: start + consume as u64 })
 }
 
 /// Read newly-appended lines since a byte offset (for live tailing). Only
-/// consumes up to the last newline so a partially-written line isn't returned.
+/// consumes up to the last newline so a partially-written line isn't returned;
+/// `offset` always sits on a newline so decoding never starts mid-codepoint.
 #[tauri::command]
 fn read_session_since(path: String, offset: u64) -> Result<TailOut, String> {
     use std::io::{Read, Seek, SeekFrom};
@@ -360,8 +370,8 @@ fn read_session_since(path: String, offset: u64) -> Result<TailOut, String> {
     let len = f.metadata().map_err(|e| e.to_string())?.len();
     if len <= offset { return Ok(TailOut { lines: vec![], offset: len }); }
     f.seek(SeekFrom::Start(offset)).map_err(|e| e.to_string())?;
-    let mut buf = vec![0u8; (len - offset) as usize];
-    f.read_exact(&mut buf).map_err(|e| e.to_string())?;
+    let mut buf = Vec::new();
+    f.take(len - offset).read_to_end(&mut buf).map_err(|e| e.to_string())?; // tolerant of a racing shrink
     let consume = match buf.iter().rposition(|&b| b == b'\n') {
         Some(i) => i + 1,
         None => return Ok(TailOut { lines: vec![], offset }),

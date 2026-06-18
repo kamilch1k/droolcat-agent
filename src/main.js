@@ -76,6 +76,7 @@ let lastErr = "";         // last stderr line — shown if a turn ends with no r
 let runQueue = [];        // Board-Helper-spawned lane runs, executed one at a time
 let queueReturnLane = null; // { chatId, lane } — lane to restore once the queue drains
 let observeTimer = null;  // live-tail poll for the active observed Claude Code session
+let observeGen = 0;       // bumped on every (re)start/stop so stale async polls bail
 let lastCcList = [];      // last-rendered Claude Code session list
 let logs = [];            // rolling activity log for the HUD panel
 let hudOpen = false, hudTab = "logs";
@@ -272,9 +273,10 @@ async function sendPrompt(text) {
   const s = curChat();
   const lane = s.activeLane || "main";
 
-  // continuing an observed session hands it off to Droolcat: stop tailing and
-  // let this turn resume the real Claude session (laneClaudeId.main is its id)
-  if (s.observed) { stopObserving(); s.observed = null; if (lastCcList.length) renderCcList(lastCcList); }
+  // continuing an observed session hands it off to Droolcat: stop tailing, close
+  // the open observed turn cleanly (no fake "Done." node), and let this turn
+  // resume the real Claude session (laneClaudeId.main is its id)
+  if (s.observed) { stopObserving(); s.observed = null; s.graph.closeObservedTurn(); if (lastCcList.length) renderCcList(lastCcList); }
 
   s.graph.meta.mode = s.edits ? "bypass" : "ask"; // lane header reflects the permission mode
   const firstEver = s.graph.turnCount === 0;
@@ -505,10 +507,18 @@ async function observeSession(info) {
 
 async function startObserving(s) {
   stopObserving();
+  const gen = observeGen;
   const t = await getTauri();
-  if (!t || !s || !s.observed) return;
+  if (!t || !s || !s.observed || gen !== observeGen) return;
+  // switching back to an already-loaded observed chat: keep its accumulated
+  // scrollback + view and just resume tailing (don't reset/refit)
+  if (s.observed.offset && s.graph.turnCount > 0) {
+    observeTimer = setInterval(() => pollObserve(s, gen), 1500);
+    return;
+  }
   try {
     const tail = await t.invoke("read_session_tail", { path: s.observed.file, maxLines: 160, maxBytes: 700000 });
+    if (gen !== observeGen || curChat() !== s || !s.observed) return; // superseded / switched away
     s.graph.reset();
     s.graph.ingestTranscript(trimToLastTurns(parseJsonl(tail.lines), 4));
     s.observed.offset = tail.offset;
@@ -516,15 +526,18 @@ async function startObserving(s) {
     renderSessions();
     if (lastCcList.length) renderCcList(lastCcList);
   } catch (e) { console.warn("observe tail failed", e); setConn("err", "couldn't read that session"); }
-  observeTimer = setInterval(() => pollObserve(s), 1500);
+  if (gen !== observeGen) return;   // don't arm a superseded timer
+  observeTimer = setInterval(() => pollObserve(s, gen), 1500);
 }
-function stopObserving() { if (observeTimer) { clearInterval(observeTimer); observeTimer = null; } }
+function stopObserving() { observeGen++; if (observeTimer) { clearInterval(observeTimer); observeTimer = null; } }
 
-async function pollObserve(s) {
-  if (!s || !s.observed || curChat() !== s || runningId) return;  // pause while a turn streams
+async function pollObserve(s, gen) {
+  if (gen !== observeGen || !s || !s.observed || curChat() !== s || runningId) return; // pause while a turn streams
   const t = await getTauri(); if (!t) return;
   try {
     const r = await t.invoke("read_session_since", { path: s.observed.file, offset: s.observed.offset });
+    // re-validate after the await — the user may have switched chats or handed off
+    if (gen !== observeGen || curChat() !== s || !s.observed || runningId) return;
     s.observed.offset = r.offset;
     if (r.lines && r.lines.length) {
       s.graph.ingestTranscript(parseJsonl(r.lines));
@@ -829,7 +842,7 @@ if (location.port === "1420") {
   window.__droolcat = {
     parseBoardBlock, runBoardActions, curChat: () => curChat(), canvas,
     logs: () => logs, runQueue: () => runQueue, voice,
-    parseJsonl, trimToLastTurns,
+    parseJsonl, trimToLastTurns, newGraph: () => new GraphModel(),
     testIngest: (objs) => { const g = new GraphModel(); g.ingestTranscript(objs); return { nodes: g.nodes.length, turns: g.turnCount, types: g.nodes.reduce((a, n) => { a[n.type] = (a[n.type] || 0) + 1; return a; }, {}), edges: g.edges.length }; },
     reset: () => { sessions.length = 0; cur = -1; localStorage.removeItem(STORE); location.reload(); },
   };

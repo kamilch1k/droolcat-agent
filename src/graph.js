@@ -394,12 +394,29 @@ export class GraphModel {
     this.markIdle();
   }
 
-  // observed transcript lines are already complete on disk — clear run state
-  // but keep the turn cursor open so later appended lines continue it
+  // observed transcript lines are complete on disk — clear run state, but leave
+  // any tool whose result hasn't been written yet showing "running" (its
+  // tool_result lands in a later poll). Keep the turn cursor open for appends.
   markIdle() {
-    for (const n of this.nodes) if (n.status === "run") n.status = "done";
+    const pending = new Set();
+    if (this.turn && this.turn.byToolUse) {
+      for (const id in this.turn.byToolUse) {
+        const n = this.turn.byToolUse[id];
+        if (n && !n.donePill && !(n.detail && (n.detail.out || n.detail.diff))) pending.add(n.id);
+      }
+    }
+    for (const n of this.nodes) if (n.status === "run" && !pending.has(n.id)) n.status = "done";
     this.running = false;
-    if (this.turn) { this.turn.streamSay = null; this.turn.streamBlocks = {}; }
+    if (this.turn) this.turn.streamSay = null;
+  }
+
+  // hand-off: close an open observed turn the way ingestTranscript chains turns
+  // (under the last real node), so resuming doesn't inject a fake "Done." result
+  closeObservedTurn() {
+    if (this.turn && !this.turn.resultId) {
+      this._lane(this.turn.laneId).lastResultId = this.turn.lastId;
+      this.turn = null;
+    }
   }
 
   stats() {
