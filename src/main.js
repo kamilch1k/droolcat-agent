@@ -446,6 +446,48 @@ function setSource(s) {
 
 // ---- sidebar (chats) -----------------------------------------------------
 
+const SIDE_MIN = 156, SIDE_MAX = 480, SIDE_KEY = "droolcat.sideW";
+function setSideWidth(px, persist) {
+  const w = Math.max(SIDE_MIN, Math.min(SIDE_MAX, Math.round(px)));
+  document.documentElement.style.setProperty("--side-w", w + "px");
+  if (persist) { try { localStorage.setItem(SIDE_KEY, String(w)); } catch {} }
+  return w;
+}
+function wireSidebarResize() {
+  const handle = $("sideresize"), side = document.querySelector(".side");
+  if (!handle || !side) return;
+  let saved = parseInt(localStorage.getItem(SIDE_KEY) || "", 10);
+  if (saved >= SIDE_MIN && saved <= SIDE_MAX) setSideWidth(saved, false);
+  let dragging = false;
+  const move = (e) => {
+    if (!dragging) return;
+    if (!(e.buttons & 1)) { up(); return; }          // mouse released off-window
+    setSideWidth(e.clientX - side.getBoundingClientRect().left, false);
+  };
+  const up = () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove("drag");
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    const w = parseInt(getComputedStyle(side).width, 10);
+    if (w) setSideWidth(w, true);
+    window.removeEventListener("mousemove", move);
+    window.removeEventListener("mouseup", up);
+  };
+  handle.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    dragging = true;
+    handle.classList.add("drag");
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  });
+  handle.addEventListener("dblclick", () => setSideWidth(178, true));   // reset to default
+  window.addEventListener("blur", up);
+}
+
 function renderSessions() {
   const h = $("sesslist");
   h.innerHTML = "";
@@ -1122,6 +1164,7 @@ if (loadSessions()) {
 window.addEventListener("beforeunload", saveSessions);
 wireBridge();
 loadCcSessions();   // populate the Claude Code session list (desktop app only)
+wireSidebarResize();
 
 // dev/preview-only test hook (gated to the Vite port; inert in the packaged app)
 if (location.port === "1420") {
