@@ -773,7 +773,26 @@ export class Canvas {
       const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); window.removeEventListener("blur", up); this.onPersist && this.onPersist(); };
       window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up); window.addEventListener("blur", up);
     });
+    el.addEventListener("contextmenu", (e) => {     // right-click a note -> its own menu
+      e.preventDefault(); e.stopPropagation();
+      const r = this.viewport.getBoundingClientRect();
+      this._showNoteMenu(e.clientX - r.left, e.clientY - r.top, note, el);
+    });
     return el;
+  }
+  _deleteNote(note, el) {
+    this.notes = this.notes.filter((x) => x !== note);
+    if (el) el.remove();
+    delete this.noteEls[note.id];
+    this.onPersist && this.onPersist();
+  }
+  _showNoteMenu(px, py, note, el) {
+    const colors = ["#fef6c7", "#d7eafe", "#dcf5dd", "#fbe0e0", "#ece7fb"];
+    this._openMenu(px, py, [
+      [note.pinned ? "☆  Unpin" : "★  Pin", () => { note.pinned = !note.pinned; el.classList.toggle("pinned", note.pinned); this.onPersist && this.onPersist(); }],
+      ["◑  Cycle color", () => { note.color = colors[(colors.indexOf(note.color) + 1) % colors.length]; el.style.background = note.color; this.onPersist && this.onPersist(); }],
+      ["🗑  Delete note", () => this._deleteNote(note, el), true],
+    ]);
   }
   addNote(x, y) {
     const note = { id: "note" + Date.now().toString(36), x: x - 90, y: y - 36, w: 180, text: "", color: "#fef6c7", pinned: false };
@@ -803,15 +822,18 @@ export class Canvas {
     this.minimap.addEventListener("mousedown", (e) => this._minimapNav(e));
   }
   _showMenu(px, py, wx, wy) {
-    const items = [
+    this._openMenu(px, py, [
       ["＋  Add note", () => this.addNote(wx, wy)],
       ["⤳  New agent lane", () => this.onNewLane && this.onNewLane()],
       ["⊡  Fit to content", () => this.fit()],
-    ];
+    ]);
+  }
+  // render the shared context menu from [label, fn, danger?] tuples
+  _openMenu(px, py, items) {
     this.menu.innerHTML = "";
-    for (const [label, fn] of items) {
+    for (const [label, fn, danger] of items) {
       const it = document.createElement("div");
-      it.className = "ctxitem"; it.textContent = label;
+      it.className = "ctxitem" + (danger ? " danger" : ""); it.textContent = label;
       it.onclick = (ev) => { ev.stopPropagation(); this.menu.style.display = "none"; fn(); };
       this.menu.appendChild(it);
     }

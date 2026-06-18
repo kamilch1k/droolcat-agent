@@ -11,6 +11,7 @@ import { GraphModel, layout } from "./graph.js";
 import { CodeGraphModel } from "./codegraph.js";
 import { Canvas } from "./canvas.js";
 import { VoiceMode } from "./voice.js";
+import { mdChat } from "./md.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -909,20 +910,67 @@ function renderConversation() {
   host._sig = sig;
   const nearBottom = host.scrollHeight - host.scrollTop - host.clientHeight < 48;
   const prevTop = host.scrollTop;
-  const go = (id) => `<button class="cm-go" data-go="${id}" title="show on board">⌖</button>`;
+  // a teleport-to-node affordance (Droolcat extra) shown on hover, top-right
+  const go = (id) => `<button class="cc-go" data-go="${id}" title="show on board">⌖</button>`;
   let h = "";
   for (const n of nodes) {
-    if (n.type === "lane") { h += `<div class="cm-lane">${escapeHtml(n.title || "lane")}</div>`; continue; }
-    if (n.type === "prompt") h += `<div class="cm cm-you" data-go="${n.id}"><div class="cm-r">You${go(n.id)}</div><div class="cm-b">${escapeHtml(clip(n.text, 500))}</div></div>`;
-    else if (n.type === "say") h += `<div class="cm cm-ai" data-go="${n.id}"><div class="cm-r">Claude${go(n.id)}</div><div class="cm-b">${escapeHtml(clip(n.text, 700))}</div></div>`;
-    else if (n.type === "tool") h += `<div class="cm cm-tool" data-go="${n.id}"><span class="cm-t">${escapeHtml(n.title)} ${escapeHtml(n.file || "")}</span>${n.resultChip ? `<span class="rchip">${escapeHtml(n.resultChip)}</span>` : ""}${go(n.id)}</div>`;
-    else if (n.type === "agent") h += `<div class="cm cm-tool" data-go="${n.id}"><span class="cm-t">◳ ${escapeHtml(n.title)}</span>${go(n.id)}</div>`;
-    else if (n.type === "result") h += `<div class="cm cm-res" data-go="${n.id}"><div class="cm-r">Result${go(n.id)}</div><div class="cm-b">${escapeHtml(clip(n.summary, 500))}</div></div>`;
+    if (n.type === "lane") {
+      if (n.lane === "main") continue;                       // main lane needs no divider
+      h += `<div class="cc-lane">${escapeHtml(n.title || "lane")}</div>`;
+    } else if (n.type === "prompt") {
+      h += `<div class="cc-turn cc-user" data-go="${n.id}">${go(n.id)}<div class="cc-md">${mdChat(clip(n.text, 4000))}</div></div>`;
+    } else if (n.type === "say") {
+      if (!String(n.text || "").trim()) continue;            // skip empty stream placeholders
+      h += `<div class="cc-turn cc-assistant" data-go="${n.id}">${go(n.id)}<div class="cc-md">${mdChat(n.text)}${n.status === "run" ? '<span class="cc-caret"></span>' : ""}</div></div>`;
+    } else if (n.type === "tool") {
+      const bullet = `<span class="cc-bullet ${ccBulletClass(n)}">●</span>`;
+      if (n.kind === "todo") {
+        h += `<div class="cc-tool" data-go="${n.id}">${bullet}<div class="cc-toolwrap"><div class="cc-toolhead"><span class="cc-tname">Update Todos</span></div>${ccTodoList(n.detail && n.detail.input && n.detail.input.todos)}</div>${go(n.id)}</div>`;
+      } else {
+        const arg = n.file ? `<span class="cc-targ">(${escapeHtml(clip(n.file, 60))})</span>` : "";
+        const res = ccToolResult(n);
+        h += `<div class="cc-tool" data-go="${n.id}">${bullet}<div class="cc-toolwrap"><div class="cc-toolhead"><span class="cc-tname">${escapeHtml(ccCap(n.title))}</span>${arg}</div>${res}</div>${go(n.id)}</div>`;
+      }
+    } else if (n.type === "agent") {
+      const res = n.donePill ? `<div class="cc-tres">⎿&nbsp; ${escapeHtml(n.donePill.l)}</div>` : "";
+      h += `<div class="cc-tool" data-go="${n.id}"><span class="cc-bullet ${ccBulletClass(n)}">●</span><div class="cc-toolwrap"><div class="cc-toolhead"><span class="cc-tname">Task</span><span class="cc-targ">(${escapeHtml(clip(n.title, 60))})</span></div>${res}</div>${go(n.id)}</div>`;
+    } else if (n.type === "result") {
+      if (n.meta) h += `<div class="cc-result" data-go="${n.id}"><span class="cc-rmeta">${escapeHtml(n.meta)}</span>${go(n.id)}</div>`;
+    }
   }
   host.innerHTML = h || `<div class="empty-side">No messages yet.</div>`;
-  host.querySelectorAll("[data-go]").forEach((el) =>
+  host.querySelectorAll(".cc-go").forEach((el) =>
     el.addEventListener("click", (e) => { e.stopPropagation(); if (canvas.model === s.graph) canvas.zoomToNode(el.dataset.go); }));
   host.scrollTop = nearBottom ? host.scrollHeight : prevTop;  // keep your place if you scrolled up
+}
+// Claude Code shows tool names capitalized (Read, Edit, Bash…)
+const ccCap = (t) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
+// colored status dot for a tool/agent line — green done, red error, amber running
+function ccBulletClass(n) {
+  if (n.donePill && n.donePill.k === "danger") return "err";
+  if (n.status === "run") return "run";
+  return "ok";
+}
+// the "⎿ …" continuation line under a tool, mirroring the CLI's result preview
+function ccToolResult(n) {
+  if (n.resultChip) return `<div class="cc-tres">⎿&nbsp; ${escapeHtml(n.resultChip)}</div>`;
+  const out = n.detail && n.detail.out;
+  if (out) {
+    const first = String(out).split("\n").find((l) => l.trim()) || "";
+    return `<div class="cc-tres">⎿&nbsp; ${escapeHtml(clip(first, 80))}</div>`;
+  }
+  if (n.status === "run") return `<div class="cc-tres cc-dim">⎿&nbsp; running…</div>`;
+  return "";
+}
+function ccTodoList(todos) {
+  const list = Array.isArray(todos) ? todos : [];
+  const items = list.slice(0, 20).map((t) => {
+    const st = t.status || "pending";
+    const box = st === "completed" ? "☒" : "☐";
+    const label = st === "in_progress" ? (t.activeForm || t.content) : t.content;
+    return `<div class="cc-td ${st === "completed" ? "done" : st === "in_progress" ? "active" : ""}">${box}&nbsp; ${escapeHtml(label || "")}</div>`;
+  }).join("");
+  return `<div class="cc-todos">${items}</div>`;
 }
 async function renderGitTree() {
   const host = $("chatbody"); const s = curChat();
