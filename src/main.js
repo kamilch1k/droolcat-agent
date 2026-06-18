@@ -489,10 +489,10 @@ function renderCcList(list) {
   lastCcList = list || lastCcList;
   const host = $("cclist");
   host.innerHTML = "";
-  // hide throwaway greeting sessions ("hi", "hey", …) — but only the tiny ones,
-  // so a chat that opened with "hi" then did real work still shows. Files on disk
-  // are left untouched.
-  const shown = lastCcList.filter((info) => !(GREETING.test(info.title || "") && (info.size || 0) < 12000));
+  // hide throwaway greeting sessions ("hi", "hey", …) from the list. A real
+  // session gets a descriptive aiTitle, so a bare-greeting title means a
+  // throwaway. Files on disk are left untouched.
+  const shown = lastCcList.filter((info) => !GREETING.test(info.title || ""));
   if (!shown.length) { host.innerHTML = `<div class="empty-side">No Claude Code sessions${lastCcList.length ? " (greeting-only hidden)" : " found"}.</div>`; return; }
   const activeRealId = curChat() && curChat().observed && curChat().observed.realId;
   for (const info of shown) {
@@ -1023,22 +1023,26 @@ function isGreetingOnly(s) {
   if (!prompts.length) return false;                       // empty/new chat — leave it
   return prompts.every((p) => GREETING.test(p.text || ""));
 }
-// one-time cleanup (you asked to delete the "hi" chats); guarded so it never
-// repeats and can't surprise-delete greeting chats you make later
+// a throwaway "hi" chat: named like a greeting AND it did no real work (no
+// tool/subagent nodes). Title-based so "hi" chats with a trivial extra reply
+// still qualify; the no-work guard protects anything substantive.
+function isThrowawayGreeting(s) {
+  if (s.graph.nodes.some((n) => n.type === "tool" || n.type === "agent")) return false;
+  return GREETING.test(s.title || "");
+}
+// run on EVERY launch (not one-shot) so accumulated "hi" test chats keep getting
+// cleaned. Only greeting-named, no-work chats are removed; real work survives.
 function pruneGreetingChats() {
-  const FLAG = "droolcat.pruned.greetings.v1";
-  try { if (localStorage.getItem(FLAG)) return 0; } catch {}
   const curId = cur >= 0 && sessions[cur] ? sessions[cur].id : null;
   const before = sessions.length;
-  sessions = sessions.filter((s) => !isGreetingOnly(s));
+  sessions = sessions.filter((s) => !isThrowawayGreeting(s));
   const removed = before - sessions.length;
   if (removed) {
     cur = curId ? sessions.findIndex((x) => x.id === curId) : 0;
     if (cur < 0) cur = 0;
     saveSessions();
-    console.log(`[droolcat] removed ${removed} greeting-only chat(s)`);
+    console.log(`[droolcat] removed ${removed} greeting chat(s)`);
   }
-  try { localStorage.setItem(FLAG, "1"); } catch {}
   return removed;
 }
 
