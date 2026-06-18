@@ -244,7 +244,7 @@ export class Canvas {
     if (n.status === "run") {
       k = "info";
       l = n.type === "tool"
-        ? ({ read: "reading…", edit: "writing…", write: "writing…", bash: "running", search: "searching…", web: "fetching…" }[n.kind] || "running")
+        ? ({ read: "reading…", edit: "writing…", write: "writing…", bash: "running", search: "searching…", web: "fetching…", mcp: "calling…" }[n.kind] || "running")
         : n.type === "agent" ? "running" : "running";
     } else if (n.status === "pend") { k = "warning"; l = "queued"; }
     else if (n.donePill) { k = n.donePill.k; l = n.donePill.l; }

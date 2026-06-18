@@ -126,28 +126,29 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .cnode.running{border-color:var(--color-border-info)}
 .cnode.sel{border-color:var(--color-text-info);box-shadow:0 0 0 1px var(--color-text-info)}
 .cnode.dim{opacity:.22}
-.lbl{font-weight:500;font-size:13px}
+.lbl{font-weight:500;font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .file,.role{font-family:var(--font-mono);font-size:11px;color:var(--color-text-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.think{font-size:11px;color:var(--color-text-tertiary);font-style:italic;margin-top:6px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.think{font-size:11px;color:var(--color-text-tertiary);font-style:italic;margin-top:6px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;overflow-wrap:anywhere}
 .think.one{-webkit-line-clamp:1}
 .row{display:flex;align-items:center;gap:7px}
 .row .pill{margin-left:auto}
 .meta{font-family:var(--font-mono);font-size:10.5px;color:var(--color-text-tertiary)}
-.wttag{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:10px;color:var(--color-text-tertiary);margin-top:7px}
+.wttag{display:flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:10px;color:var(--color-text-tertiary);margin-top:7px;min-width:0;max-width:100%;word-break:break-word;overflow-wrap:anywhere}
 .wttag .sw{width:7px;height:7px;border-radius:2px}
 
 .t-prompt{background:var(--color-background-secondary)}
-.prompttext{font-size:12.5px;color:var(--color-text-primary);margin-top:5px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.prompttext{font-size:12.5px;color:var(--color-text-primary);margin-top:5px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;overflow-wrap:anywhere}
 .node-sum{font-size:12.5px;font-weight:600;color:var(--color-text-primary);line-height:1.4;margin-top:7px;padding-bottom:6px;border-bottom:0.5px solid var(--color-border-tertiary)}
-.saytext{font-size:12px;color:var(--color-text-primary);margin-top:6px;line-height:1.5;overflow:hidden;position:relative;white-space:pre-wrap;word-break:break-word}
+.saytext{font-size:12px;color:var(--color-text-primary);margin-top:6px;line-height:1.5;overflow:hidden;position:relative;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere}
 .saytext.clamped{max-height:220px}
 .saytext.clamped::after{content:"";position:absolute;left:0;right:0;bottom:0;height:30px;background:linear-gradient(transparent,var(--color-background-primary));pointer-events:none}
 .saytext.expanded{max-height:none}
 
 /* shared light markdown styling (Claude responses, inspector) */
 .md b,.md strong{font-weight:600;color:var(--color-text-primary)}
-.md code{font-family:var(--font-mono);font-size:.9em;background:var(--color-background-tertiary);border-radius:4px;padding:0 4px}
-.md pre{font-family:var(--font-mono);font-size:11px;background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:6px;padding:8px 10px;overflow-x:auto;margin:6px 0;white-space:pre;color:var(--color-text-secondary)}
+.md code{font-family:var(--font-mono);font-size:.9em;background:var(--color-background-tertiary);border-radius:4px;padding:0 4px;overflow-wrap:anywhere}
+/* wrap code on the board — a node can't be scrolled, so a long line must wrap, not clip at the card edge */
+.md pre{font-family:var(--font-mono);font-size:11px;background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:6px;padding:8px 10px;margin:6px 0;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;color:var(--color-text-secondary)}
 
 /* copy button on content nodes */
 .copybtn{margin-left:auto;flex:none;background:none;border:none;color:var(--color-text-tertiary);width:22px;height:20px;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:12px;opacity:0;transition:opacity .12s}
@@ -176,7 +177,7 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .caret{display:inline-block;width:6px;height:13px;background:var(--color-text-info);margin-left:1px;vertical-align:-2px;animation:blink 1s step-start infinite}
 @keyframes blink{50%{opacity:0}}
 .t-orch{background:var(--color-background-secondary)}
-.osub{font-size:11.5px;color:var(--color-text-secondary)}
+.osub{font-size:11.5px;color:var(--color-text-secondary);word-break:break-word;overflow-wrap:anywhere}
 .t-agent .ahead{display:flex;align-items:center;gap:9px}
 .avatar{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none}
 .avatar svg{width:17px;height:17px}
@@ -187,6 +188,8 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .k-bash .kic,.k-bash .lbl{color:var(--wt-api)}
 .k-search .kic,.k-search .lbl{color:var(--color-text-secondary)}
 .k-web .kic,.k-web .lbl{color:var(--wt-tests)}
+.k-mcp .kic,.k-mcp .lbl{color:#b6478f}
+.k-call .kic,.k-call .lbl{color:var(--color-text-secondary)}
 .t-synth{border-style:dashed;background:var(--color-background-secondary)}
 .t-file .lbl{font-size:12.5px;font-family:var(--font-mono)}
 .langbadge{font-family:var(--font-mono);font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--color-text-tertiary);margin-left:auto;border:0.5px solid var(--color-border-secondary);border-radius:4px;padding:1px 5px}
@@ -206,7 +209,7 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .t-result .output{font-family:var(--font-mono);font-size:11.5px;line-height:1.65;color:var(--color-text-secondary);white-space:pre-wrap;word-break:break-word}
 .t-result .output b{color:var(--color-text-primary);font-weight:600}
 .t-result .output code{background:var(--color-background-tertiary);border-radius:4px;padding:0 4px}
-.t-result .output pre{background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:6px;padding:8px 10px;overflow-x:auto;margin:6px 0;white-space:pre;font-size:11px}
+.t-result .output pre{background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:6px;padding:8px 10px;margin:6px 0;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;font-size:11px}
 .outbtn{margin-top:9px;font-size:11px;font-family:var(--font-mono);color:var(--color-text-info);background:none;border:none;padding:2px 0;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
 .outbtn:hover{text-decoration:underline}
 .rf{display:flex;align-items:center;gap:10px;margin-top:12px;padding-top:11px;border-top:0.5px solid var(--color-border-tertiary);font-family:var(--font-mono);font-size:11px;color:var(--color-text-tertiary)}
@@ -358,7 +361,7 @@ button.pbtag{cursor:pointer}
 .lane-compact .aw-ic svg{width:13px;height:13px}
 .lane-compact:hover{background:var(--color-background-secondary);color:var(--color-text-primary)}
 .lane-meta{display:flex;align-items:center;gap:7px;margin-top:9px;flex-wrap:wrap}
-.lane-meta .lane-model{font-family:var(--font-mono);font-size:10.5px;color:var(--color-text-tertiary)}
+.lane-meta .lane-model{font-family:var(--font-mono);font-size:10.5px;color:var(--color-text-tertiary);min-width:0;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lane-meta .aw-pill{font-size:10px;padding:1px 7px}
 .lane-ctx{font-family:var(--font-mono);font-size:10px;color:var(--color-text-tertiary)}
 .lane-status{margin-top:8px}

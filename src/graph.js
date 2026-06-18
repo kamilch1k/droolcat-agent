@@ -40,8 +40,27 @@ const SUB_PALETTE = ["var(--wt-frontend)", "var(--wt-api)", "var(--wt-tests)", "
 // agent lanes (parallel conversations in one board) each get their own accent
 const LANE_PALETTE = ["var(--wt-frontend)", "var(--wt-api)", "var(--wt-tests)", "#b6478f", "#3a86c8", "#c7711b"];
 
-function kindOf(tool) { return KIND_BY_TOOL[tool] || "read"; }
-function titleOf(tool) { return TITLE_BY_TOOL[tool] || tool.toLowerCase(); }
+// MCP tools arrive named `mcp__<server>__<method>` — split them so we can show
+// a clean method title + which server it came from, not the raw underscored id.
+function isMcp(tool) { return typeof tool === "string" && tool.startsWith("mcp__"); }
+function mcpParts(tool) {
+  if (!isMcp(tool)) return null;
+  const parts = tool.split("__").filter(Boolean);   // ["mcp", server, method...]
+  return { server: parts[1] || "mcp", method: parts.slice(2).join("__") || parts[1] || "tool" };
+}
+function deUnderscore(s) { return String(s || "").replace(/_+/g, " ").trim(); }
+
+function kindOf(tool) {
+  if (KIND_BY_TOOL[tool]) return KIND_BY_TOOL[tool];
+  if (isMcp(tool)) return "mcp";
+  return "call";                                      // unknown tool: a neutral call, NOT a file read
+}
+function titleOf(tool) {
+  if (TITLE_BY_TOOL[tool]) return TITLE_BY_TOOL[tool];
+  const mcp = mcpParts(tool);
+  if (mcp) return clip(deUnderscore(mcp.method), 22);
+  return tool;                                        // unknown tool: keep its real (cased) name
+}
 function tail(p, n = 2) {
   if (!p) return "";
   const parts = String(p).replace(/\\/g, "/").split("/").filter(Boolean);
@@ -56,6 +75,8 @@ export function fmtTokens(n) {
   return n >= 1000 ? (n / 1000).toFixed(1) + "k tok" : n + " tok";
 }
 function targetOf(tool, input = {}) {
+  const mcp = mcpParts(tool);
+  if (mcp) return clip(deUnderscore(mcp.server), 28);
   switch (tool) {
     case "Read": case "Edit": case "MultiEdit": case "Write":
       return tail(input.file_path);
@@ -505,10 +526,25 @@ export class GraphModel {
     this.seq = d.seq || this.nodes.length;
     this.cost = d.cost || 0;
     this.byId = {};
-    for (const n of this.nodes) { this.byId[n.id] = n; n.h = undefined; } // re-measure on render
+    for (const n of this.nodes) { this.byId[n.id] = n; n.h = undefined; normalizeNode(n); } // re-measure on render + upgrade old nodes
     this.turn = null;
     this.running = false;
     return this;
+  }
+}
+
+// older reducer versions baked MCP/unknown tools into saved chats with the raw
+// `mcp__server__method` string as the title, kind "read" (→ magnifier icon +
+// "reading…" pill), and a bogus "N lines" chip. Re-derive a clean title/kind/
+// server subtitle from the stored name so reloading an old chat looks right.
+function normalizeNode(n) {
+  if (!n || n.type !== "tool") return;
+  if (typeof n.title === "string" && n.title.startsWith("mcp__")) {
+    const mcp = mcpParts(n.title);
+    n.kind = "mcp";
+    n.title = clip(deUnderscore(mcp.method), 22);
+    n.file = clip(deUnderscore(mcp.server), 28);
+    if (typeof n.resultChip === "string" && /^\d+\s*lines$/.test(n.resultChip)) n.resultChip = undefined;
   }
 }
 

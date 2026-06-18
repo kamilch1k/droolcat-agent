@@ -13,6 +13,10 @@ export const I = {
   search: SVG('<circle cx="7" cy="7" r="4"/><path d="M10 10l3 3"/>'),
   web: SVG('<circle cx="8" cy="8" r="5.4"/><path d="M2.6 8h10.8M8 2.6c1.6 1.6 1.6 9.2 0 10.8M8 2.6C6.4 4.2 6.4 11.8 8 13.4"/>'),
   synth: SVG('<path d="M4 3.5v2.8a3.5 3.5 0 0 0 3.5 3.5H12"/><path d="M10 7.3l2 2.2-2 2.2"/>'),
+  // MCP tool call — a connector plug with a cord
+  mcp: SVG('<path d="M6 2.6v2.6M10 2.6v2.6"/><rect x="4.4" y="5.2" width="7.2" height="3.8" rx="1.3"/><path d="M8 9v2.4a2 2 0 0 0 2 2h1.6"/>'),
+  // generic / unknown tool call — a target dot
+  call: SVG('<circle cx="8" cy="8" r="4.8"/><circle cx="8" cy="8" r="1.3" fill="currentColor" stroke="none"/>'),
   check: SVG('<circle cx="8" cy="8" r="5.4"/><path d="M5.6 8.2l1.7 1.7 3.2-3.6"/>'),
   branch: SVG('<circle cx="5" cy="4" r="1.5"/><circle cx="5" cy="12" r="1.5"/><circle cx="11" cy="6" r="1.5"/><path d="M5 5.5v5M5 9.2c0-2.2 1.4-3 5.8-3.2"/>'),
   msg: SVG('<path d="M2.8 4.4h10.4v6.2H7l-3 2.4v-2.4H2.8z"/>'),
@@ -30,5 +34,5 @@ export const I = {
 // tool-kind -> icon, used on tool nodes
 export const KIC = {
   read: I.read, edit: I.edit, write: I.write, bash: I.bash,
-  search: I.search, web: I.web, synth: I.synth,
+  search: I.search, web: I.web, synth: I.synth, mcp: I.mcp, call: I.call,
 };
