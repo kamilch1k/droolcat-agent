@@ -24,10 +24,11 @@ function balanceMd(s) {
 
 // a one-line gist of a response — first sentence, markdown/code stripped, capped
 function summarize(s) {
-  s = String(s || "").replace(/```[\s\S]*?```/g, " ").replace(/`([^`]+)`/g, "$1").replace(/[*#>_]/g, "").replace(/\s+/g, " ").trim();
+  // keep underscores (snake_case identifiers); don't treat ':' as a sentence end
+  s = String(s || "").replace(/```[\s\S]*?```/g, " ").replace(/`([^`]+)`/g, "$1").replace(/[*#>]/g, "").replace(/\s+/g, " ").trim();
   if (!s) return "";
-  const m = s.match(/^.*?[.!?:](\s|$)/);
-  let h = (m ? m[0] : s).trim().replace(/[:]$/, "");
+  const m = s.match(/^.*?[.!?](\s|$)/);
+  let h = (m ? m[0] : s).trim();
   if (h.length > 92) h = h.slice(0, 90).replace(/\s+\S*$/, "") + "…";
   return h;
 }
@@ -81,7 +82,15 @@ export class Canvas {
     this._initBoard();     // right-click menu + minimap
   }
 
-  setModel(m) { this.model = m; }
+  setModel(m) {
+    // node ids restart at n0 per session, so tear down the agent-graph DOM caches
+    // before switching — otherwise same-id elements get reused with stale content
+    for (const id in this.els) this.els[id].remove();
+    for (const k in this.edgeEls) this.edgeEls[k].remove();
+    this.els = {}; this.edgeEls = {};
+    this.searchHits = []; this._searchIdx = -1;
+    this.model = m;
+  }
   setNotes(notes) {
     this.notes = notes || [];
     for (const id in this.noteEls) { this.noteEls[id].remove(); delete this.noteEls[id]; }
@@ -544,7 +553,7 @@ export class Canvas {
     this.viewport.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;                                       // left button only
       // let widgets handle their own drags/clicks (nodes, notes, menus, minimap, panels)
-      if (e.target.closest && e.target.closest(".cnode,.note,.ctxmenu,.minimap,.searchbar,.hudpanel,.clusterlabel")) return;
+      if (e.target.closest && e.target.closest(".cnode,.note,.ctxmenu,.minimap,.searchbar,.hudpanel,.clusterlabel,.voicemode")) return;
       dr = 1; moved = 0;
       this.world.style.transition = "none";                            // instant while dragging
       sx = e.clientX; sy = e.clientY; cx0 = this.cam.x; cy0 = this.cam.y;
@@ -564,6 +573,8 @@ export class Canvas {
       if (e.target === this.viewport || e.target === this.world || (e.target.tagName || "").toLowerCase() === "svg") this.deselect();
     });
     this.viewport.addEventListener("wheel", (e) => {
+      // let scrollable in-viewport panels handle their own wheel scroll
+      if (e.target.closest && e.target.closest(".hudpanel,.searchbar,.chatpanel,.inspector,.ctxmenu,.voicemode")) return;
       e.preventDefault();
       this.world.style.transition = "none"; // instant zoom under the cursor
       this.onUserCam && this.onUserCam();
@@ -712,17 +723,19 @@ export class Canvas {
       let moved = false;
       el.classList.add("dragging");
       const mv = (ev) => {
+        if (!(ev.buttons & 1)) { up(); return; }           // missed mouseup -> release
         if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return;
         moved = true; el._moved = true;
         o.dx = odx + (ev.clientX - sx) / sc; o.dy = ody + (ev.clientY - sy) / sc;
         layout(m); this.render();
       };
       const up = () => {
-        window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up);
+        window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); window.removeEventListener("blur", up);
         el.classList.remove("dragging");
+        setTimeout(() => { el._moved = false; }, 0);        // don't poison the next click if released off-lane
         if (moved) this.onPersist && this.onPersist();
       };
-      window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
+      window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up); window.addEventListener("blur", up);
     });
   }
 
@@ -753,9 +766,12 @@ export class Canvas {
       if (e.target.closest(".nt") || e.target.closest("button")) return;
       e.stopPropagation();
       const sx = e.clientX, sy = e.clientY, ox = note.x, oy = note.y, sc = this.cam.s;
-      const mv = (ev) => { note.x = ox + (ev.clientX - sx) / sc; note.y = oy + (ev.clientY - sy) / sc; el.style.left = note.x + "px"; el.style.top = note.y + "px"; };
-      const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); this.onPersist && this.onPersist(); };
-      window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
+      const mv = (ev) => {
+        if (!(ev.buttons & 1)) { up(); return; }           // missed mouseup -> release
+        note.x = ox + (ev.clientX - sx) / sc; note.y = oy + (ev.clientY - sy) / sc; el.style.left = note.x + "px"; el.style.top = note.y + "px";
+      };
+      const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); window.removeEventListener("blur", up); this.onPersist && this.onPersist(); };
+      window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up); window.addEventListener("blur", up);
     });
     return el;
   }

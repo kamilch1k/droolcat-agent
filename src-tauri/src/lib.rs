@@ -402,41 +402,48 @@ struct GitCommit {
     subject: String,
 }
 
-/// Read the recent git history of a folder for the git-tree panel.
+/// Read the recent git history of a folder for the git-tree panel. Async +
+/// spawn_blocking so the blocking `git log` never stalls the UI thread.
 #[tauri::command]
-fn git_graph(cwd: String, limit: Option<usize>) -> Result<Vec<GitCommit>, String> {
+async fn git_graph(cwd: String, limit: Option<usize>) -> Result<Vec<GitCommit>, String> {
     if cwd.trim().is_empty() || !Path::new(&cwd).is_dir() {
         return Err("no folder".into());
     }
     let n = limit.unwrap_or(60);
-    let fmt = "%H\x1f%h\x1f%P\x1f%D\x1f%an\x1f%cr\x1f%s";
-    let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(&cwd).arg("log")
-        .arg(format!("--max-count={n}"))
-        .arg(format!("--pretty=format:{fmt}"));
-    #[cfg(windows)]
-    cmd.creation_flags(CREATE_NO_WINDOW);
-    let output = cmd.output().map_err(|e| format!("git not available: {e}"))?;
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        return Err(if err.trim().is_empty() { "not a git repository".into() } else { err.trim().to_string() });
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let f: Vec<&str> = line.split('\u{1f}').collect();
-        if f.len() < 7 { continue; }
-        out.push(GitCommit {
-            hash: f[0].to_string(),
-            short: f[1].to_string(),
-            parents: f[2].split_whitespace().filter(|s| !s.is_empty()).count(),
-            refs: f[3].to_string(),
-            author: f[4].to_string(),
-            when: f[5].to_string(),
-            subject: f[6].to_string(),
-        });
-    }
-    Ok(out)
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<GitCommit>, String> {
+        let fmt = "%H\x1f%h\x1f%P\x1f%D\x1f%an\x1f%cr\x1f%s";
+        let mut cmd = Command::new("git");
+        cmd.arg("-C").arg(&cwd).arg("log")
+            .arg(format!("--max-count={n}"))
+            .arg(format!("--pretty=format:{fmt}"));
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let output = cmd.output().map_err(|e| format!("git not available: {e}"))?;
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            if err.contains("does not have any commits yet") { return Ok(Vec::new()); } // fresh repo
+            return Err(if err.trim().is_empty() { "not a git repository".into() } else { err.trim().to_string() });
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut out = Vec::new();
+        for line in text.lines() {
+            // splitn(7) keeps any stray 0x1F in the subject attached instead of dropping it
+            let f: Vec<&str> = line.splitn(7, '\u{1f}').collect();
+            if f.len() < 7 { continue; }
+            out.push(GitCommit {
+                hash: f[0].to_string(),
+                short: f[1].to_string(),
+                parents: f[2].split_whitespace().filter(|s| !s.is_empty()).count(),
+                refs: f[3].to_string(),
+                author: f[4].to_string(),
+                when: f[5].to_string(),
+                subject: f[6].to_string(),
+            });
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| format!("git task failed: {e}"))?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -489,9 +489,10 @@ function renderCcList(list) {
   lastCcList = list || lastCcList;
   const host = $("cclist");
   host.innerHTML = "";
-  // hide throwaway greeting sessions ("hi", "hey", …) from the list — the real
-  // transcript files on disk are left untouched
-  const shown = lastCcList.filter((info) => !GREETING.test(info.title || ""));
+  // hide throwaway greeting sessions ("hi", "hey", …) — but only the tiny ones,
+  // so a chat that opened with "hi" then did real work still shows. Files on disk
+  // are left untouched.
+  const shown = lastCcList.filter((info) => !(GREETING.test(info.title || "") && (info.size || 0) < 12000));
   if (!shown.length) { host.innerHTML = `<div class="empty-side">No Claude Code sessions${lastCcList.length ? " (greeting-only hidden)" : " found"}.</div>`; return; }
   const activeRealId = curChat() && curChat().observed && curChat().observed.realId;
   for (const info of shown) {
@@ -846,15 +847,23 @@ function toggleChatPanel() {
 function setPanelTab(tab) {
   panelTab = tab;
   document.querySelectorAll("#cptabs button[data-cp]").forEach((b) => b.classList.toggle("active", b.dataset.cp === tab));
+  const cb = $("chatbody"); if (cb) cb._sig = null;   // force a rebuild when switching tabs
   renderPanel();
 }
 function renderPanel() { if (!panelOpen) return; if (panelTab === "git") renderGitTree(); else renderConversation(); }
 function renderConversation() {
   const host = $("chatbody"); const s = curChat(); if (!host) return;
-  if (!s) { host.innerHTML = `<div class="empty-side">No chat selected.</div>`; return; }
+  if (!s) { host.innerHTML = `<div class="empty-side">No chat selected.</div>`; host._sig = "none"; return; }
+  // skip the full rebuild (and its scroll/selection reset) when nothing changed
+  const nodes = s.graph.nodes;
+  const sig = s.id + "|" + nodes.map((n) => n.id + (n.text ? n.text.length : 0) + (n.summary ? n.summary.length : 0) + (n.status || "") + (n.resultChip || "")).join(",");
+  if (host._sig === sig) return;
+  host._sig = sig;
+  const nearBottom = host.scrollHeight - host.scrollTop - host.clientHeight < 48;
+  const prevTop = host.scrollTop;
   const go = (id) => `<button class="cm-go" data-go="${id}" title="show on board">⌖</button>`;
   let h = "";
-  for (const n of s.graph.nodes) {
+  for (const n of nodes) {
     if (n.type === "lane") { h += `<div class="cm-lane">${escapeHtml(n.title || "lane")}</div>`; continue; }
     if (n.type === "prompt") h += `<div class="cm cm-you" data-go="${n.id}"><div class="cm-r">You${go(n.id)}</div><div class="cm-b">${escapeHtml(clip(n.text, 500))}</div></div>`;
     else if (n.type === "say") h += `<div class="cm cm-ai" data-go="${n.id}"><div class="cm-r">Claude${go(n.id)}</div><div class="cm-b">${escapeHtml(clip(n.text, 700))}</div></div>`;
@@ -865,7 +874,7 @@ function renderConversation() {
   host.innerHTML = h || `<div class="empty-side">No messages yet.</div>`;
   host.querySelectorAll("[data-go]").forEach((el) =>
     el.addEventListener("click", (e) => { e.stopPropagation(); if (canvas.model === s.graph) canvas.zoomToNode(el.dataset.go); }));
-  host.scrollTop = host.scrollHeight;
+  host.scrollTop = nearBottom ? host.scrollHeight : prevTop;  // keep your place if you scrolled up
 }
 async function renderGitTree() {
   const host = $("chatbody"); const s = curChat();
@@ -880,7 +889,7 @@ async function renderGitTree() {
     if (!commits || !commits.length) { host.innerHTML = `<div class="empty-side">No commits.</div>`; return; }
     host.innerHTML = commits.map((c, i) => {
       const refs = (c.refs || "").split(",").map((r) => r.trim()).filter((r) => r && r !== "HEAD");
-      const ref = refs.length ? `<span class="gitref">${escapeHtml(refs[0].replace("HEAD -> ", "").replace("tag: ", "⌖ "))}</span>` : "";
+      const ref = refs.map((r) => `<span class="gitref">${escapeHtml(r.replace("HEAD -> ", "").replace("tag: ", "⌖ "))}</span>`).join("");
       return `<div class="gitrow${i === 0 ? " head" : ""}"><div class="gitrail"><div class="gitdot"></div></div>
         <div class="gitmeta"><div class="gitmsg">${ref}${escapeHtml(c.subject)}</div>
         <div class="gitsub">${escapeHtml(c.short)} · ${escapeHtml(c.author)} · ${escapeHtml(c.when)}</div></div></div>`;
