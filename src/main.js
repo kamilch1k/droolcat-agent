@@ -930,6 +930,9 @@ function renderConversation() {
       h += `<div class="cc-lane">${escapeHtml(n.title || "lane")}</div>`;
     } else if (n.type === "prompt") {
       h += `<div class="cc-turn cc-user" data-go="${n.id}">${go(n.id)}<div class="cc-md">${mdChat(clip(n.text, 4000))}</div></div>`;
+    } else if (n.type === "think") {
+      if (!String(n.text || "").trim()) continue;
+      h += `<div class="cc-turn cc-think" data-go="${n.id}">${go(n.id)}<div class="cc-think-h">✻ Thinking</div><div class="cc-md">${mdChat(n.text)}</div></div>`;
     } else if (n.type === "say") {
       if (!String(n.text || "").trim()) continue;            // skip empty stream placeholders
       h += `<div class="cc-turn cc-assistant" data-go="${n.id}">${go(n.id)}<div class="cc-md">${mdChat(n.text)}${n.status === "run" ? '<span class="cc-caret"></span>' : ""}</div></div>`;
@@ -946,7 +949,8 @@ function renderConversation() {
       const res = n.donePill ? `<div class="cc-tres">⎿&nbsp; ${escapeHtml(n.donePill.l)}</div>` : "";
       h += `<div class="cc-tool" data-go="${n.id}"><span class="cc-bullet ${ccBulletClass(n)}">●</span><div class="cc-toolwrap"><div class="cc-toolhead"><span class="cc-tname">Task</span><span class="cc-targ">(${escapeHtml(clip(n.title, 60))})</span></div>${res}</div>${go(n.id)}</div>`;
     } else if (n.type === "result") {
-      if (n.meta) h += `<div class="cc-result" data-go="${n.id}"><span class="cc-rmeta">${escapeHtml(n.meta)}</span>${go(n.id)}</div>`;
+      const err = n.donePill && n.donePill.k === "danger";
+      if (n.meta || err) h += `<div class="cc-result${err ? " err" : ""}" data-go="${n.id}"><span class="cc-rmeta">${err ? "✗" : "✓"}&nbsp; ${escapeHtml(n.meta || (err ? "Failed" : "Done"))}</span>${go(n.id)}</div>`;
     }
   }
   host.innerHTML = h || `<div class="empty-side">No messages yet.</div>`;
@@ -969,9 +973,21 @@ function ccBulletClass(n) {
 }
 // the "⎿ …" continuation line under a tool, mirroring the CLI's result preview
 function ccToolResult(n) {
+  // edits: show the CLI-style "⎿ +N −M" plus a few colored diff rows
+  const diff = n.detail && n.detail.diff;
+  if (Array.isArray(diff) && diff.length) {
+    const rows = diff.slice(0, 6).map((r) => `<div class="cc-diff ${r[0] === "ad" ? "ad" : "rm"}">${escapeHtml(clip(r[1] || "", 70))}</div>`).join("");
+    const more = diff.length > 6 ? `<div class="cc-diff-more">…+${diff.length - 6} more</div>` : "";
+    return `<div class="cc-tres">⎿&nbsp; ${escapeHtml(n.resultChip || "edited")}</div><div class="cc-diff-box">${rows}${more}</div>`;
+  }
+  if (n.kind === "bash" && n.donePill) return `<div class="cc-tres">⎿&nbsp; ${escapeHtml(n.donePill.l)}</div>`;
   if (n.resultChip) return `<div class="cc-tres">⎿&nbsp; ${escapeHtml(n.resultChip)}</div>`;
   const out = n.detail && n.detail.out;
   if (out) {
+    if (n.kind === "search") {
+      const matches = String(out).split("\n").filter((l) => l.trim()).length;
+      return `<div class="cc-tres">⎿&nbsp; Found ${matches} ${matches === 1 ? "match" : "matches"}</div>`;
+    }
     const first = String(out).split("\n").find((l) => l.trim()) || "";
     return `<div class="cc-tres">⎿&nbsp; ${escapeHtml(clip(first, 80))}</div>`;
   }

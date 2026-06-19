@@ -96,7 +96,7 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .cedge.cross{stroke-dasharray:4 5;stroke:var(--color-text-tertiary)}
 
 /* Miro board: sticky notes, right-click menu, minimap */
-.note{position:absolute;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.14);min-height:70px;font-family:var(--ui)}
+.note{position:absolute;z-index:5;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.14);min-height:70px;font-family:var(--ui)}
 .note.pinned{box-shadow:0 2px 8px rgba(0,0,0,.14),0 0 0 2px var(--wt-tests)}
 .notebar{display:flex;justify-content:flex-end;gap:3px;padding:4px 4px 0;opacity:0;transition:opacity .15s}
 .note:hover .notebar{opacity:1}
@@ -143,6 +143,15 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .saytext.clamped{max-height:220px}
 .saytext.clamped::after{content:"";position:absolute;left:0;right:0;bottom:0;height:30px;background:linear-gradient(transparent,var(--color-background-primary));pointer-events:none}
 .saytext.expanded{max-height:none}
+/* extended-thinking node — the CLI's muted, italic ✻ reasoning block */
+.t-think{background:var(--color-background-secondary)}
+.t-think .lbl{color:var(--color-text-tertiary);font-weight:500}
+.thinkglyph{flex:none;color:#9a7bd0;font-size:13px;line-height:1}
+.thinktext{font-size:12px;color:var(--color-text-secondary);font-style:italic;margin-top:6px;line-height:1.5;overflow:hidden;position:relative;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere}
+.thinktext.clamped{max-height:160px}
+.thinktext.clamped::after{content:"";position:absolute;left:0;right:0;bottom:0;height:28px;background:linear-gradient(transparent,var(--color-background-secondary));pointer-events:none}
+.thinktext.expanded{max-height:none}
+.thinktext code,.thinktext pre{font-style:normal}
 
 /* shared light markdown styling (Claude responses, inspector) */
 .md b,.md strong{font-weight:600;color:var(--color-text-primary)}
@@ -249,7 +258,7 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .lanebtn{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--color-text-secondary);background:var(--color-background-secondary);border:0.5px solid var(--color-border-secondary);border-radius:var(--radius);padding:8px 10px;white-space:nowrap;max-width:170px}
 .lanebtn:hover{background:var(--color-background-tertiary)}
 .lanebtn .sw{width:9px;height:9px;border-radius:3px;flex:none}
-.lanebtn .lanenm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lanebtn .lanenm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lanechev{font-size:9px;color:var(--color-text-tertiary);transition:transform .18s}
 .lanewrap.open .lanechev{transform:rotate(180deg)}
 .lanemenu{position:absolute;left:0;bottom:calc(100% + 8px);min-width:218px;background:var(--color-background-primary);border:0.5px solid var(--color-border-secondary);border-radius:var(--radius-lg);box-shadow:0 10px 30px rgba(0,0,0,.17);padding:5px;display:none;z-index:60}
@@ -343,7 +352,7 @@ button.pbtag{cursor:pointer}
 .voicemode.s-nostt{--vm-accent:#b23b34}
 
 /* code cluster rendered on the same board (a region, not a separate view) */
-.clusterlabel{position:absolute;display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.6px;background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:6px;padding:4px 6px 4px 9px}
+.clusterlabel{position:absolute;z-index:5;display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;color:var(--color-text-tertiary);text-transform:uppercase;letter-spacing:.6px;background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:6px;padding:4px 6px 4px 9px}
 .clusterlabel .cl-x{border:none;background:var(--color-background-secondary);color:var(--color-text-tertiary);width:18px;height:18px;border-radius:4px;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer}
 .clusterlabel .cl-x:hover{background:var(--color-background-tertiary);color:var(--color-text-danger)}
 
@@ -392,6 +401,10 @@ button.pbtag{cursor:pointer}
 .cc-user{padding-left:12px;border-left:2px solid var(--color-border-secondary);margin:10px 0 8px}
 .cc-user .cc-md{color:var(--color-text-secondary)}
 .cc-assistant{padding-top:2px}
+.cc-think{opacity:.9}
+.cc-think-h{font-size:11px;color:#9a7bd0;font-weight:600;margin-bottom:3px}
+.cc-think .cc-md{color:var(--color-text-secondary);font-style:italic}
+.cc-think .cc-md code,.cc-think .cc-md pre{font-style:normal}
 .cc-md{font-size:13px;line-height:1.6;color:var(--color-text-primary);word-break:break-word}
 .cc-md p{margin:0 0 8px}
 .cc-md p:last-child{margin-bottom:0}
@@ -419,6 +432,14 @@ button.pbtag{cursor:pointer}
 .cc-td.active{color:var(--color-text-primary);font-weight:500}
 .cc-lane{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--color-text-tertiary);text-align:center;padding:10px 0 4px}
 .cc-result{position:relative;display:flex;align-items:center;font-family:var(--font-mono);font-size:10px;color:var(--color-text-tertiary);padding:2px 22px 8px 16px;border-bottom:0.5px solid var(--color-border-tertiary);margin-bottom:8px}
+.cc-rmeta{color:var(--color-text-tertiary)}
+.cc-result.err .cc-rmeta{color:var(--color-text-danger)}
+/* colored edit-diff rows under a tool line, like the CLI hunk */
+.cc-diff-box{margin:2px 0 0 16px;border-radius:5px;overflow:hidden;font-family:var(--font-mono);font-size:10.5px;line-height:1.55}
+.cc-diff{white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;padding:0 5px}
+.cc-diff.ad{background:var(--color-background-success);color:var(--color-text-success)}
+.cc-diff.rm{background:var(--color-background-danger);color:var(--color-text-danger)}
+.cc-diff-more{color:var(--color-text-tertiary);padding:1px 5px}
 /* teleport-to-node affordance (hover) */
 .cc-go{position:absolute;top:4px;right:2px;background:none;border:none;color:var(--color-text-tertiary);cursor:pointer;font-size:13px;padding:0 2px;opacity:0;transition:opacity .12s}
 .cc-turn:hover .cc-go,.cc-tool:hover .cc-go,.cc-result:hover .cc-go{opacity:.7}

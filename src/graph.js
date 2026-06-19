@@ -29,6 +29,7 @@ const TITLE_BY_TOOL = {
 export const SIZES = {
   prompt: { w: 300, h: 56 },
   say: { w: 300, h: 92 },
+  think: { w: 300, h: 70 },
   agent: { w: 196, h: 104 },
   tool: { w: 168, h: 74 },
   result: { w: 440, h: 176 },
@@ -265,6 +266,9 @@ export class GraphModel {
   _makeSay(text) {
     return this._add({ type: "say", title: "Claude", text: String(text || ""), wt: "main", status: "run", detail: {} });
   }
+  _makeThink(text) {
+    return this._add({ type: "think", title: "Thinking", text: String(text || ""), wt: "main", status: "run", detail: {} });
+  }
   _makeToolNode(name, input = {}) {
     if (name === "Task") {
       const color = SUB_PALETTE[this.subCount++ % SUB_PALETTE.length];
@@ -295,6 +299,10 @@ export class GraphModel {
         this._chain(say);
         t.streamSay = say;
         t.streamBlocks[ev.index] = { type: "text", node: say };
+      } else if (cb.type === "thinking") {
+        const think = this._makeThink("");
+        this._chain(think);
+        t.streamBlocks[ev.index] = { type: "thinking", node: think };
       } else if (cb.type === "tool_use") {
         const node = this._makeToolNode(cb.name || "tool", cb.input || {});
         this._chain(node);
@@ -305,10 +313,12 @@ export class GraphModel {
       const blk = t.streamBlocks[ev.index], d = ev.delta || {};
       if (d.type === "text_delta" && blk && blk.type === "text" && blk.node) {
         blk.node.text = (blk.node.text || "") + (d.text || "");
+      } else if (d.type === "thinking_delta" && blk && blk.type === "thinking" && blk.node) {
+        blk.node.text = (blk.node.text || "") + (d.thinking || "");
       }
     } else if (ev.type === "content_block_stop") {
       const blk = t.streamBlocks[ev.index];
-      if (blk && blk.type === "text" && blk.node) { blk.node.status = "done"; if (t.streamSay === blk.node) t.streamSay = null; }
+      if (blk && blk.node && (blk.type === "text" || blk.type === "thinking")) { blk.node.status = "done"; if (t.streamSay === blk.node) t.streamSay = null; }
     }
   }
 
@@ -350,7 +360,9 @@ export class GraphModel {
     // no partial stream — build nodes from the full message, in order, so the
     // turn reads You -> [Claude's words] -> tool -> ... like a conversation
     for (const block of content) {
-      if (block.type === "text" && block.text && block.text.trim()) {
+      if (block.type === "thinking" && block.thinking && block.thinking.trim()) {
+        const think = this._makeThink(clip2(block.thinking.trim(), 800)); think.status = "done"; this._chain(think);
+      } else if (block.type === "text" && block.text && block.text.trim()) {
         const say = this._makeSay(clip2(block.text.trim(), 800)); say.status = "done"; this._chain(say);
       } else if (block.type === "tool_use") {
         const node = this._makeToolNode(block.name || "tool", block.input || {});

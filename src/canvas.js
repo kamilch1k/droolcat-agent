@@ -130,10 +130,10 @@ export class Canvas {
       const sig = `${n.type}|${n.kind || ""}|${n.status}|${n.title}|${n.file || ""}|${n.text || ""}|${n.thought || ""}|${n.donePill ? n.donePill.l : ""}|${n.resultChip || ""}|${n.summary ? n.summary.length : 0}|${n.meta || ""}|${n.model || ""}|${n.mode || ""}|${n.ctx || ""}|${n.ctxTokens || 0}|${n.turns || 0}|${n.expanded ? 1 : 0}|${n.collapsed ? 1 : 0}|${this.searchHits && this.searchHits.includes(n.id) ? 1 : 0}`;
       if (el._sig !== sig) {
         el.innerHTML = this._card(n);
-        el._sig = sig; el._dirty = true;
+        el._sig = sig; el._dirty = true; el._pillEl = null; el._pillState = null;
         const cp = el.querySelector(".copybtn");
         if (cp) cp.addEventListener("click", (e) => { e.stopPropagation(); this._copy(n, cp); });
-        if (n.type === "result" || n.type === "say") {
+        if (n.type === "result" || n.type === "say" || n.type === "think") {
           const b = el.querySelector(".outbtn");
           if (b) b.addEventListener("click", (e) => {
             e.stopPropagation();
@@ -193,17 +193,30 @@ export class Canvas {
     let maxX = 0, maxY = 0;
     for (const n of m.nodes) {
       const el = this.els[n.id]; if (!el) continue;
-      el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.w}px`;
-      el.classList.add("show");
-      el.classList.toggle("running", n.status === "run");
-      el.classList.toggle("sel", n.id === this.selected);
-      el.classList.toggle("touched", !!n.touched);
-      el.classList.toggle("dim", !!(this.selWt && n.wt && n.wt !== this.selWt));
-      el.classList.toggle("hit", this.searchHits.length > 0 && this.searchHits.includes(n.id));
+      // only touch the DOM when something actually changed — a warm sync over a
+      // large graph must be near-free (this loop runs on every stream event)
+      const pos = `left:${n.x}px;top:${n.y}px;width:${n.w}px`;
+      if (el._pos !== pos) { el.style.cssText = pos; el._pos = pos; n._moved = true; } else n._moved = false;
+      if (!el._shown) { el.classList.add("show"); el._shown = true; }
+      const cls = (n.status === "run" ? "r" : "") + (n.id === this.selected ? "s" : "") + (n.touched ? "t" : "")
+        + (this.selWt && n.wt && n.wt !== this.selWt ? "d" : "") + (this.searchHits.length && this.searchHits.includes(n.id) ? "h" : "");
+      if (el._cls !== cls) {
+        el.classList.toggle("running", n.status === "run");
+        el.classList.toggle("sel", n.id === this.selected);
+        el.classList.toggle("touched", !!n.touched);
+        el.classList.toggle("dim", !!(this.selWt && n.wt && n.wt !== this.selWt));
+        el.classList.toggle("hit", this.searchHits.length > 0 && this.searchHits.includes(n.id));
+        el._cls = cls;
+      }
       this._pill(el, n);
       maxX = Math.max(maxX, n.x + n.w); maxY = Math.max(maxY, n.y + n.h);
     }
-    if (this.aux) for (const n of this.aux.nodes) { maxX = Math.max(maxX, this.auxOrigin.x + n.x + n.w); maxY = Math.max(maxY, this.auxOrigin.y + n.y + n.h); }
+    // keep the code cluster parked to the right of the conversation as it grows
+    // (monotonic — only ever nudges right, never jumps left under the user)
+    if (this.aux) {
+      this.auxOrigin.x = Math.max(this.auxOrigin.x, maxX + 180);
+      for (const n of this.aux.nodes) { maxX = Math.max(maxX, this.auxOrigin.x + n.x + n.w); maxY = Math.max(maxY, this.auxOrigin.y + n.y + n.h); }
+    }
     this.world.style.width = maxX + 240 + "px";
     this.world.style.height = maxY + 200 + "px";
     this.edgesSvg.setAttribute("width", maxX + 240);
@@ -213,8 +226,9 @@ export class Canvas {
       const p = this.edgeEls[e.from + ">" + e.to];
       const a = m.byId[e.from], b = m.byId[e.to];
       if (!p || !a || !b) continue;
-      p.setAttribute("d", this._path(a, b));
-      p.classList.add("on");
+      // recompute the path only when an endpoint actually moved (or first draw)
+      if (a._moved || b._moved || !p._on) { p.setAttribute("d", this._path(a, b)); }
+      if (!p._on) { p.classList.add("on"); p._on = true; }
     }
     this._renderAux();
 
@@ -239,7 +253,6 @@ export class Canvas {
   }
 
   _pill(el, n) {
-    const pl = el.querySelector(".pill"); if (!pl) return;
     let k, l;
     if (n.status === "run") {
       k = "info";
@@ -249,8 +262,13 @@ export class Canvas {
     } else if (n.status === "pend") { k = "warning"; l = "queued"; }
     else if (n.donePill) { k = n.donePill.k; l = n.donePill.l; }
     else { k = "success"; l = "done"; }
+    const state = k + "|" + l;
+    if (el._pillState === state) return;                       // unchanged -> no DOM work
+    const pl = el._pillEl || (el._pillEl = el.querySelector(".pill"));
+    if (!pl) { el._pillState = state; return; }
     pl.className = "aw-pill pill p-" + k;
     pl.textContent = l;
+    el._pillState = state;
   }
 
   _copyBtn() { return `<button class="copybtn" title="copy">${I.copy}</button>`; }
@@ -321,6 +339,12 @@ export class Canvas {
       const sum = head ? `<div class="node-sum">${esc(head)}</div>` : "";
       return `<div class="row"><span class="aw-ic">${I.orch}</span><span class="lbl">Claude</span>${this._copyBtn()}</div>${sum}
         <div class="saytext md${n.expanded ? " expanded" : long ? " clamped" : ""}">${mdToHtml(n.text || "")}${n.status === "run" ? '<span class="caret"></span>' : ""}</div>${btn}`;
+    }
+    if (n.type === "think") {
+      const long = (n.text || "").length > 360;
+      const btn = long ? `<button class="outbtn">${n.expanded ? "▴ less" : "▾ more"}</button>` : "";
+      return `<div class="row thinkrow"><span class="thinkglyph">✻</span><span class="lbl">Thinking</span>${this._copyBtn()}</div>
+        <div class="thinktext md${n.expanded ? " expanded" : long ? " clamped" : ""}">${mdToHtml(n.text || "")}${n.status === "run" ? '<span class="caret"></span>' : ""}</div>${btn}`;
     }
     if (n.type === "orch")
       return `<div class="row"><span class="aw-ic">${I.orch}</span><span class="lbl">${esc(n.title)}</span>${pill}</div>
@@ -585,12 +609,22 @@ export class Canvas {
       this.cam.s = ns; this._applyCam();
     }, { passive: false });
   }
-  // animate the next programmatic camera move (follow / fit / zoom buttons)
-  _easeCam() { this.world.style.transition = "transform .32s cubic-bezier(.4,0,.2,1)"; }
+  // animate the next programmatic camera move. Discrete moves (fit/zoom/home/
+  // double-click) use the full ease; continuous follow() passes a short one so
+  // the camera tracks the newest node instead of perpetually rubber-banding
+  // toward a target that keeps moving as nodes stream in.
+  _easeCam(dur = 0.32) { this.world.style.transition = `transform ${dur}s cubic-bezier(.4,0,.2,1)`; }
   _applyCam() {
     this.world.style.transform = `translate(${this.cam.x}px,${this.cam.y}px) scale(${this.cam.s})`;
     if (this.zl) this.zl.textContent = Math.round(this.cam.s * 100) + "%";
-    this._renderMinimap();
+    this._scheduleMinimap();   // collapse a burst of pan/zoom frames into one redraw
+  }
+  // the minimap node layer doesn't change on camera-only moves, so coalesce
+  // redraws to once per frame (a drag fires many mousemoves per frame)
+  _scheduleMinimap() {
+    if (this._mmQueued) return;
+    this._mmQueued = true;
+    requestAnimationFrame(() => { this._mmQueued = false; this._renderMinimap(); });
   }
   zoom(f) { this.onUserCam && this.onUserCam(); this.cam.s = Math.min(2, Math.max(0.25, this.cam.s * f)); this._easeCam(); this._applyCam(); }
 
@@ -701,7 +735,7 @@ export class Canvas {
     // x: only move if the newest node would be off-screen horizontally
     const nx = (newest.x + newest.w / 2) * s + this.cam.x;
     if (nx < 90 || nx > r.width - 90) this.cam.x = r.width / 2 - (newest.x + newest.w / 2) * s;
-    this._easeCam();
+    this._easeCam(0.14);   // short ease: track the live tail crisply, no rubber-band
     this._applyCam();
   }
 
