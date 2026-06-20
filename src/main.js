@@ -82,6 +82,7 @@ const canvas = new Canvas(
     onUserCam: () => { setFollow(false); },      // user grabbed the camera -> stop following
     onLaneSelect: (laneId) => selectLane(laneId),// clicked a lane header -> make it active
     onCloseAux: () => setView("agents"),         // closed the code cluster -> reflect in the tab
+    onRemoveLane: (laneId) => removeLane(laneId), // × on a lane header / right-click -> remove it
   }
 );
 
@@ -230,6 +231,28 @@ function selectLane(laneId) {
   refreshLaneBar();
   $("prompt").focus();
   scheduleSave();
+}
+
+// remove an agent lane (× on its header / right-click). main can't be removed.
+async function removeLane(laneId) {
+  const s = curChat(); if (!s || laneId === "main") return;
+  const g = s.graph;
+  if (runningChat === s.id && runningLane === laneId) { toast("That lane is still working — stop it first."); return; }
+  const lane = g.lanes[laneId];
+  const turns = (lane && lane.turns) || 0;
+  if (turns > 0) {
+    const ok = await modalConfirm({ title: "Remove this lane?", body: `<b>${escapeHtml(laneLabel(s, laneId))}</b> has ${turns} turn${turns > 1 ? "s" : ""} of work. Removing it deletes those nodes from the board.`, confirmLabel: "Remove lane", danger: true });
+    if (!ok) return;
+  }
+  const label = laneLabel(s, laneId);
+  g.removeLane(laneId);
+  if (s.activeLane === laneId) s.activeLane = "main";
+  if (s.laneClaudeId) delete s.laneClaudeId[laneId];
+  closeLaneMenu();
+  scheduleSync();
+  refreshLaneBar();
+  scheduleSave();
+  toast(`Removed ${clip(label, 30)}`);
 }
 
 // toggle a lane's compact view (collapse its tool/say nodes to dense lines)

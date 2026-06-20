@@ -395,6 +395,9 @@ button.pbtag{cursor:pointer}
 .lane-compact{margin-left:auto;flex:none;background:var(--color-background-tertiary);border:0.5px solid var(--color-border-secondary);border-radius:6px;width:24px;height:22px;color:var(--color-text-secondary);display:flex;align-items:center;justify-content:center;cursor:pointer}
 .lane-compact .aw-ic svg{width:13px;height:13px}
 .lane-compact:hover{background:var(--color-background-secondary);color:var(--color-text-primary)}
+.lane-del{flex:none;background:none;border:none;color:var(--color-text-tertiary);font-size:18px;line-height:1;width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;opacity:0;transition:opacity .12s}
+.t-lane:hover .lane-del{opacity:.75}
+.lane-del:hover{opacity:1;background:var(--color-background-danger);color:var(--color-text-danger)}
 .lane-meta{display:flex;align-items:center;gap:7px;margin-top:9px;flex-wrap:wrap}
 .lane-meta .lane-model{font-family:var(--font-mono);font-size:10.5px;color:var(--color-text-tertiary);min-width:0;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .lane-meta .aw-pill{font-size:10px;padding:1px 7px}

@@ -183,6 +183,25 @@ export class GraphModel {
     return h;
   }
 
+  // remove an agent lane and everything in it (its header + nodes + edges). The
+  // main lane is the conversation itself and can't be removed.
+  removeLane(laneId) {
+    if (laneId === "main") return 0;
+    const ids = new Set(this.nodes.filter((n) => (n.lane || "main") === laneId).map((n) => n.id));
+    const lane = this.lanes[laneId];
+    if (lane && lane.headerId != null) ids.add(lane.headerId);
+    this.nodes = this.nodes.filter((n) => !ids.has(n.id));
+    this.edges = this.edges.filter((e) => !ids.has(e.from) && !ids.has(e.to));
+    for (const id of ids) delete this.byId[id];
+    delete this.lanes[laneId];
+    this.laneOrder = this.laneOrder.filter((l) => l !== laneId);
+    if (this.laneOffset) delete this.laneOffset[laneId];
+    if (this.laneCompact) delete this.laneCompact[laneId];
+    if (this.wtMap) delete this.wtMap[laneId];
+    if (this.turn && this.turn.laneId === laneId) this.turn = null;
+    return ids.size;
+  }
+
   _add(node) {
     node.id = "n" + this.seq++;
     node.status = node.status || "run";

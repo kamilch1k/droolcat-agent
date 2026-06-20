@@ -44,7 +44,7 @@ function mdToHtml(s) {
 }
 
 export class Canvas {
-  constructor(els, { onSteer, onNewLane, onPersist, onCompact, onUserCam, onLaneSelect, onCloseAux } = {}) {
+  constructor(els, { onSteer, onNewLane, onPersist, onCompact, onUserCam, onLaneSelect, onCloseAux, onRemoveLane } = {}) {
     this.world = els.world;
     this.edgesSvg = els.edges;
     this.viewport = els.viewport;
@@ -61,6 +61,7 @@ export class Canvas {
     this.onUserCam = onUserCam;       // user grabbed the camera -> stop auto-follow
     this.onLaneSelect = onLaneSelect; // clicked a lane header -> make it the active lane
     this.onCloseAux = onCloseAux;     // closed the code cluster
+    this.onRemoveLane = onRemoveLane; // remove an agent lane (× on header / right-click)
 
     this.model = null;
     this.els = {};        // node id -> DOM el
@@ -145,6 +146,8 @@ export class Canvas {
         if (n.type === "lane") {
           const c = el.querySelector(".lane-compact");
           if (c) c.addEventListener("click", (e) => { e.stopPropagation(); this.onCompact && this.onCompact(n.lane); });
+          const dl = el.querySelector(".lane-del");
+          if (dl) dl.addEventListener("click", (e) => { e.stopPropagation(); this.onRemoveLane && this.onRemoveLane(n.lane); });
         }
       }
     }
@@ -322,9 +325,10 @@ export class Canvas {
       const ctx = n.ctx ? `<span class="lane-ctx">${esc(n.ctx)} ctx</span>` : "";
       const pct = n.ctxTokens ? Math.min(100, n.ctxTokens / 2000) : 0;
       const gauge = n.ctxTokens ? `<div class="ctxbar" title="context ${esc(n.ctx)} / 200k"><div class="ctxfill" style="width:${pct.toFixed(0)}%"></div></div>` : "";
+      const del = n.lane !== "main" ? `<button class="lane-del" title="remove this lane">×</button>` : "";
       return `<div class="lane-head"><span class="sw" style="background:${this._wtColor(n.wt)}"></span>
         <span class="lbl">${esc(n.title || "Agent lane")}</span>
-        <button class="lane-compact" title="compact this lane">${I.compact}</button></div>
+        <button class="lane-compact" title="compact this lane">${I.compact}</button>${del}</div>
         <div class="lane-meta"><span class="lane-model">${esc(n.model || "claude")}</span><span class="aw-pill ${modeK}">${modeL}</span>${ctx}</div>
         ${gauge}
         <div class="lane-status">${st}</div>`;
@@ -746,8 +750,13 @@ export class Canvas {
       if (el._moved) { el._moved = false; return; }   // a drag, not a click
       this.onLaneSelect && this.onLaneSelect(n.lane);
     });
+    el.addEventListener("contextmenu", (e) => {        // right-click a lane header -> its own menu
+      e.preventDefault(); e.stopPropagation();
+      const r = this.viewport.getBoundingClientRect();
+      this._showLaneMenu(e.clientX - r.left, e.clientY - r.top, n.lane);
+    });
     el.addEventListener("mousedown", (e) => {
-      if (e.target.closest(".lane-compact")) return;   // let the compact button click through
+      if (e.target.closest(".lane-compact, .lane-del")) return;   // let the header buttons click through
       e.stopPropagation();
       this.onUserCam && this.onUserCam();
       const m = this.model, lane = n.lane;
@@ -827,6 +836,16 @@ export class Canvas {
       ["◑  Cycle color", () => { note.color = colors[(colors.indexOf(note.color) + 1) % colors.length]; el.style.background = note.color; this.onPersist && this.onPersist(); }],
       ["🗑  Delete note", () => this._deleteNote(note, el), true],
     ]);
+  }
+  _showLaneMenu(px, py, lane) {
+    const m = this.model;
+    const compact = !!(m && m.laneCompact && m.laneCompact[lane]);
+    const items = [
+      [compact ? "⊟  Expand lane" : "⊞  Compact lane", () => this.onCompact && this.onCompact(lane)],
+      ["⤳  New agent lane", () => this.onNewLane && this.onNewLane()],
+    ];
+    if (lane !== "main") items.push(["🗑  Remove this lane", () => this.onRemoveLane && this.onRemoveLane(lane), true]);
+    this._openMenu(px, py, items);
   }
   addNote(x, y) {
     const note = { id: "note" + Date.now().toString(36), x: x - 90, y: y - 36, w: 180, text: "", color: "#fef6c7", pinned: false };
