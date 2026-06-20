@@ -279,11 +279,27 @@ function handleEvent(evt) {
   scheduleSave();   // persist the conversation as it streams (debounced), not just at turn end
 }
 
+const AUTH_RE = /\b401\b|invalid authentication|not (?:signed|logged) in|unauthor|credential|please run.{0,12}login|claude login|missing api key|oauth/i;
+function turnErrorText(s, lane) {
+  const L = s.graph.lanes[lane];
+  const r = L ? s.graph.byId[L.lastResultId] : null;
+  return ((lastErr || "") + " " + (r && r.summary ? r.summary : "")).trim();
+}
+function showAuthHelp() {
+  setConn("err", "Claude Code not signed in");
+  toast("Claude Code isn't signed in — that's why the turn failed.", { kind: "err", timeout: 9000, actionLabel: "How to fix", onAction: () => modalConfirm({
+    title: "Claude Code isn't signed in",
+    body: `The <code>claude</code> CLI that Droolcat drives returned <b>401 — invalid credentials</b>. Droolcat can't sign in for you.<br><br>Open a terminal and run:<br><br><code>claude login</code><br><br>(or set an <code>ANTHROPIC_API_KEY</code> in your environment). Then come back and send your prompt again.`,
+    confirmLabel: "Got it", cancelLabel: "Close",
+  }) });
+}
 function endTurn(ok) {
   const s = (runningChat && chatById(runningChat)) || curChat();
   const wasLane = runningLane;
+  let authFail = false;
   if (s) {
     s.graph.endTurn(ok, ok ? "" : lastErr);
+    if (!ok) authFail = AUTH_RE.test(turnErrorText(s, wasLane));
     // if a resumed turn failed, drop the stale session id so the next prompt
     // starts a fresh Claude session instead of failing again
     if (!ok && /resume|conversation|no session|session id/i.test(lastErr)) s.laneClaudeId[runningLane] = null;
@@ -294,6 +310,7 @@ function endTurn(ok) {
   $("stopbtn").style.display = "none";
   setConn(tauri ? "live" : "", tauri ? "ready" : "browser (sample only)");
   refreshLaneBar();
+  if (authFail) showAuthHelp();
   if (hudOpen) renderHud();
   // Board Helper finished -> execute any board actions it proposed
   if (ok && s && wasLane === "board") {
