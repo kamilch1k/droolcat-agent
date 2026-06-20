@@ -1036,9 +1036,13 @@ function cpSend() {
   sendPrompt(v);
 }
 function renderPanel() { if (!panelOpen) return; if (panelTab === "git") renderGitTree(); else renderConversation(); }
+let cpOpenChat = null;
 function renderConversation() {
   const host = $("chatbody"); const s = curChat(); if (!host) return;
   if (!s) { host.innerHTML = `<div class="empty-side">No chat selected.</div>`; host._sig = "none"; return; }
+  // node ids restart at n0 per chat, so a stale expand-state would collide —
+  // reset the open set whenever the rendered chat changes
+  if (cpOpenChat !== s.id) { cpOpen.clear(); cpOpenChat = s.id; }
   // skip the full rebuild (and its scroll/selection reset) when nothing changed
   const nodes = s.graph.nodes;
   const sig = s.id + "|" + nodes.map((n) => n.id + (n.text ? n.text.length : 0) + (n.summary ? n.summary.length : 0) + (n.status || "") + (n.resultChip || "")).join(",");
@@ -1061,18 +1065,8 @@ function renderConversation() {
     } else if (n.type === "say") {
       if (!String(n.text || "").trim()) continue;            // skip empty stream placeholders
       h += `<div class="cc-turn cc-assistant" data-go="${n.id}">${go(n.id)}<div class="cc-md">${mdChat(n.text)}${n.status === "run" ? '<span class="cc-caret"></span>' : ""}</div></div>`;
-    } else if (n.type === "tool") {
-      const bullet = `<span class="cc-bullet ${ccBulletClass(n)}">●</span>`;
-      if (n.kind === "todo") {
-        h += `<div class="cc-tool" data-go="${n.id}">${bullet}<div class="cc-toolwrap"><div class="cc-toolhead"><span class="cc-tname">Update Todos</span></div>${ccTodoList(n.detail && n.detail.input && n.detail.input.todos)}</div>${go(n.id)}</div>`;
-      } else {
-        const arg = n.file ? `<span class="cc-targ">(${escapeHtml(clip(n.file, 60))})</span>` : "";
-        const res = ccToolResult(n);
-        h += `<div class="cc-tool" data-go="${n.id}">${bullet}<div class="cc-toolwrap"><div class="cc-toolhead"><span class="cc-tname">${escapeHtml(ccCap(n.title))}</span>${arg}</div>${res}</div>${go(n.id)}</div>`;
-      }
-    } else if (n.type === "agent") {
-      const res = n.donePill ? `<div class="cc-tres">⎿&nbsp; ${escapeHtml(n.donePill.l)}</div>` : "";
-      h += `<div class="cc-tool" data-go="${n.id}"><span class="cc-bullet ${ccBulletClass(n)}">●</span><div class="cc-toolwrap"><div class="cc-toolhead"><span class="cc-tname">Task</span><span class="cc-targ">(${escapeHtml(clip(n.title, 60))})</span></div>${res}</div>${go(n.id)}</div>`;
+    } else if (n.type === "tool" || n.type === "agent") {
+      h += ccAction(n, go);
     } else if (n.type === "result") {
       const err = n.donePill && n.donePill.k === "danger";
       if (n.meta || err) h += `<div class="cc-result${err ? " err" : ""}" data-go="${n.id}"><span class="cc-rmeta">${err ? "✗" : "✓"}&nbsp; ${escapeHtml(n.meta || (err ? "Failed" : "Done"))}</span>${go(n.id)}</div>`;
@@ -1081,7 +1075,71 @@ function renderConversation() {
   host.innerHTML = h || `<div class="empty-side">No messages yet.</div>`;
   host.querySelectorAll(".cc-go").forEach((el) =>
     el.addEventListener("click", (e) => { e.stopPropagation(); if (canvas.model === s.graph) canvas.zoomToNode(el.dataset.go); }));
+  // the › disclosure on a tool/action line expands its detail inline (like the app)
+  host.querySelectorAll(".cc-act-x").forEach((b) => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const id = b.dataset.exp;
+    const act = b.closest(".cc-act"); const d = act && act.querySelector(".cc-act-d");
+    const open = !cpOpen.has(id);
+    if (open) cpOpen.add(id); else cpOpen.delete(id);
+    if (d) d.hidden = !open;
+    b.classList.toggle("open", open);
+  }));
   host.scrollTop = nearBottom ? host.scrollHeight : prevTop;  // keep your place if you scrolled up
+}
+// which tool/action lines are expanded in the panel (persists across re-renders)
+const cpOpen = new Set();
+// render a tool/agent node as the Claude Code app's muted, collapsed one-line
+// summary with a › disclosure (e.g. "Edited canvas.js +7 −4 ›") instead of the
+// terminal bullet style.
+function ccAction(n, go) {
+  const open = cpOpen.has(n.id);
+  if (n.kind === "todo") {
+    const todos = n.detail && n.detail.input && n.detail.input.todos;
+    const done = Array.isArray(todos) ? todos.filter((t) => t.status === "completed").length : 0;
+    const total = Array.isArray(todos) ? todos.length : 0;
+    return `<div class="cc-act" data-go="${n.id}"><div class="cc-act-line"><span class="cc-act-v">Updated</span> <span class="cc-act-t">todos</span> <span class="cc-act-meta">${done}/${total}</span><span class="cc-sp"></span>${go(n.id)}<button class="cc-act-x${open ? " open" : ""}" data-exp="${n.id}" title="expand">›</button></div><div class="cc-act-d"${open ? "" : " hidden"}>${ccTodoList(todos)}</div></div>`;
+  }
+  const sum = ccActionSummary(n);
+  const detail = ccActionDetail(n);
+  const chev = detail ? `<button class="cc-act-x${open ? " open" : ""}" data-exp="${n.id}" title="expand">›</button>` : "";
+  const det = detail ? `<div class="cc-act-d"${open ? "" : " hidden"}>${detail}</div>` : "";
+  const run = n.status === "run" ? `<span class="cc-act-run">●</span>` : "";
+  const err = n.donePill && n.donePill.k === "danger" ? " err" : "";
+  return `<div class="cc-act${err}" data-go="${n.id}"><div class="cc-act-line"><span class="cc-act-v">${sum.verb}</span> <span class="cc-act-t">${sum.target}</span>${sum.stat}${run}<span class="cc-sp"></span>${go(n.id)}${chev}</div>${det}</div>`;
+}
+function ccActionSummary(n) {
+  const f = n.file ? clip(n.file, 50) : "";
+  let verb, target;
+  switch (n.kind) {
+    case "read": verb = "Read"; target = f; break;
+    case "edit": verb = "Edited"; target = f; break;
+    case "write": verb = "Wrote"; target = f; break;
+    case "bash": verb = "Ran"; target = f || (n.detail && n.detail.input && n.detail.input.command ? clip(n.detail.input.command, 50) : "command"); break;
+    case "search": verb = "Searched"; target = f || "the codebase"; break;
+    case "web": verb = "Fetched"; target = f; break;
+    case "mcp": verb = "Used"; target = (f ? clip(f, 22) + " · " : "") + ccCap(n.title); break;
+    default:
+      if (n.type === "agent") { verb = "Task"; target = clip(n.title, 46); }
+      else { verb = ccCap(n.title); target = f; }
+  }
+  let stat = "";
+  if (n.kind === "edit" && n.resultChip) {
+    const m = String(n.resultChip).match(/\+(\d+)\s*[−-]\s*(\d+)/);
+    if (m) stat = ` <span class="cc-add">+${m[1]}</span> <span class="cc-rm">−${m[2]}</span>`;
+  }
+  return { verb: escapeHtml(verb), target: escapeHtml(target || ""), stat };
+}
+function ccActionDetail(n) {
+  const diff = n.detail && n.detail.diff;
+  if (Array.isArray(diff) && diff.length) {
+    return `<div class="cc-diff-box">${diff.slice(0, 60).map((r) => `<div class="cc-diff ${r[0] === "ad" ? "ad" : "rm"}">${escapeHtml(clip(r[1] || "", 90))}</div>`).join("")}${diff.length > 60 ? `<div class="cc-diff-more">…+${diff.length - 60} more</div>` : ""}</div>`;
+  }
+  const out = n.detail && n.detail.out;
+  if (out) return `<pre class="cc-out">${escapeHtml(clip(String(out), 1400))}</pre>`;
+  if (n.type === "agent" && n.detail && n.detail.think) return `<div class="cc-out">${escapeHtml(clip(String(n.detail.think), 700))}</div>`;
+  if (n.donePill) return `<div class="cc-out cc-dim">${escapeHtml(n.donePill.l)}</div>`;
+  return "";
 }
 // Claude Code shows tool names capitalized (Read, Edit, Bash…); collapse the
 // noisy mcp__server__tool form down to just the tool segment
