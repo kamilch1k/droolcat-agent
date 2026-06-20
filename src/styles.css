@@ -1,6 +1,6 @@
 :root{
   --color-background-primary:#ffffff; --color-background-secondary:#f6f5f1; --color-background-tertiary:#eeede7;
-  --color-text-primary:#1d1c1a; --color-text-secondary:#615f59; --color-text-tertiary:#9b988f;
+  --color-text-primary:#1d1c1a; --color-text-secondary:#5c5a53; --color-text-tertiary:#78756c;
   --color-border-tertiary:#e8e6df; --color-border-secondary:#dad7ce;
   --color-background-info:#e8f0fd; --color-text-info:#1c5fc7; --color-border-info:#a8c6f3;
   --color-background-success:#e7f3e8; --color-text-success:#2c7a39;
@@ -13,7 +13,28 @@
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:var(--color-background-secondary);color:var(--color-text-primary);font-family:var(--ui);font-size:14px;letter-spacing:-0.011em;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
 button{font-family:inherit;color:inherit;cursor:pointer}
+/* keyboard focus ring — none existed before; mouse clicks stay clean via :focus-visible */
+:focus-visible{outline:2px solid var(--color-text-info);outline-offset:1px;border-radius:4px}
 .frame{height:100vh;padding:0;display:flex}
+/* transient toasts (save failures, undo, status) */
+.toasts{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none}
+.toast{pointer-events:auto;display:flex;align-items:center;gap:12px;background:var(--color-text-primary);color:#fff;font-size:12.5px;padding:9px 14px;border-radius:10px;box-shadow:0 6px 22px rgba(0,0,0,.22);max-width:440px;animation:toastin .18s ease}
+.toast.err{background:var(--color-text-danger)}
+.toast.ok{background:var(--color-text-success)}
+.toast button{background:rgba(255,255,255,.18);border:none;color:#fff;font-size:11.5px;font-weight:600;padding:4px 9px;border-radius:7px;white-space:nowrap}
+.toast button:hover{background:rgba(255,255,255,.3)}
+@keyframes toastin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+/* in-app modal (replaces native confirm + first-run consent) */
+.modal{position:fixed;inset:0;z-index:210;background:rgba(20,18,16,.34);display:flex;align-items:center;justify-content:center;animation:toastin .14s ease}
+.modalbox{background:var(--color-background-primary);border:0.5px solid var(--color-border-secondary);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);padding:20px;width:min(440px,calc(100vw - 48px))}
+.modal-h{font-size:15px;font-weight:600;margin-bottom:8px}
+.modal-b{font-size:13px;line-height:1.55;color:var(--color-text-secondary)}
+.modal-b code{font-family:var(--font-mono);font-size:11.5px;background:var(--color-background-secondary);border-radius:4px;padding:1px 5px}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.modal-actions button{font-size:12.5px;padding:8px 14px;border-radius:9px;border:0.5px solid var(--color-border-secondary);background:var(--color-background-primary);font-weight:500}
+.modal-actions button:hover{background:var(--color-background-secondary)}
+.modal-actions button.primary{background:var(--color-text-primary);color:#fff;border-color:var(--color-text-primary)}
+.modal-actions button.danger{background:var(--color-text-danger);color:#fff;border-color:var(--color-text-danger)}
 .window{flex:1;display:flex;flex-direction:column;background:var(--color-background-primary);overflow:hidden}
 .conn{font-family:var(--font-mono);font-size:10.5px;color:var(--color-text-tertiary);display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
 .conn::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--color-border-secondary)}
@@ -35,6 +56,7 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 .sessrow.active{background:var(--color-background-secondary);color:var(--color-text-primary)}
 .sessrow span.t{overflow:hidden;white-space:nowrap;flex:1;min-width:0;-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 22px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 22px),transparent)}
 .sessrow .dot{width:7px;height:7px;border-radius:50%;flex:none}
+.sessrename{flex:1;min-width:0;font:inherit;font-size:12.5px;border:0.5px solid var(--color-border-info);border-radius:5px;padding:2px 6px;outline:none;background:var(--color-background-primary);color:var(--color-text-primary)}
 .sessrow .sessdel{flex:none;background:none;border:none;color:var(--color-text-tertiary);font-size:16px;line-height:1;padding:0 3px;border-radius:5px;opacity:0;transition:opacity .12s}
 .sessrow:hover .sessdel{opacity:.8}
 .sessrow .sessdel:hover{opacity:1;background:var(--color-background-tertiary);color:var(--color-text-danger)}
@@ -117,6 +139,10 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .emptyic svg{width:40px;height:40px}
 .emptyh{font-size:16px;font-weight:500;margin-bottom:6px}
 .emptyp{font-size:13px;color:var(--color-text-secondary);line-height:1.6}
+.emptyreq{font-size:12px;color:var(--color-text-secondary);margin-top:12px}
+.emptyreq a{color:var(--color-text-info);pointer-events:auto}
+.emptyhint{font-size:11px;color:var(--color-text-tertiary);margin-top:16px;letter-spacing:.01em}
+.secsub{font-size:10.5px;color:var(--color-text-tertiary);padding:0 7px 5px;line-height:1.4}
 .emptyp code,.emptyp b{font-family:var(--font-mono);font-size:12px;color:var(--color-text-primary)}
 .emptyp b{font-family:var(--ui)}
 
@@ -235,7 +261,7 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .pb-box{border:0.5px solid var(--color-border-secondary);border-radius:16px;background:var(--color-background-primary);padding:5px 8px 6px 14px;display:flex;flex-direction:column;gap:3px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
 .pb-box:focus-within{border-color:var(--color-border-secondary);box-shadow:0 1px 6px rgba(0,0,0,.07)}
 .pb-inputrow{display:flex;align-items:flex-end;gap:8px}
-.pinput{flex:1;border:none;background:none;padding:7px 0 5px;font-size:14px;outline:none;font-family:var(--ui);color:var(--color-text-primary)}
+.pinput{flex:1;border:none;background:none;padding:7px 0 5px;font-size:14px;outline:none;font-family:var(--ui);color:var(--color-text-primary);resize:none;line-height:1.45;max-height:168px;overflow-y:auto}
 .pinput::placeholder{color:var(--color-text-tertiary)}
 .sendbtn{width:31px;height:31px;flex:none;border-radius:50%;background:var(--color-text-primary);color:#fff;border:none;display:flex;align-items:center;justify-content:center;margin-bottom:1px}
 .sendbtn:hover{opacity:.9}
@@ -249,8 +275,8 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .pb-toolbar .lanebtn:hover{background:var(--color-background-secondary)}
 .pb-toolbar .pbtag{border:none;background:none;padding:5px 8px;font-size:11.5px;color:var(--color-text-secondary)}
 .pb-toolbar .pbtag:hover{background:var(--color-background-secondary);color:var(--color-text-primary)}
-.pb-toolbar .pbtag.bypass{background:var(--color-background-warning);color:var(--color-text-warning)}
-.pb-toolbar .pbtag.bypass:hover{background:var(--color-background-warning)}
+.pb-toolbar .pbtag.bypass{background:var(--color-background-danger);color:var(--color-text-danger);font-weight:600}
+.pb-toolbar .pbtag.bypass:hover{background:var(--color-background-danger)}
 .pb-model{font-family:var(--ui)}
 
 /* prompt bar: lane drop-up + permissions / mic / model controls */
@@ -280,7 +306,7 @@ svg.edges{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .pbtag{flex:none;font-family:var(--font-mono);font-size:11px;padding:8px 9px;border-radius:var(--radius);border:0.5px solid var(--color-border-secondary);background:var(--color-background-secondary);color:var(--color-text-secondary);white-space:nowrap}
 button.pbtag:hover{background:var(--color-background-tertiary);color:var(--color-text-primary)}
 .pbtag.muted{color:var(--color-text-tertiary)}
-.pbtag.bypass{background:var(--color-background-warning);color:var(--color-text-warning);border-color:transparent}
+.pbtag.bypass{background:var(--color-background-danger);color:var(--color-text-danger);border-color:transparent;font-weight:600}
 button.pbtag{cursor:pointer}
 .modelmenu{left:auto;right:0;min-width:150px}
 

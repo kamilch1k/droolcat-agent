@@ -10,10 +10,11 @@
 <div class="frame"><div class="window">
   <div class="body">
     <aside class="side">
-      <div class="newbtn" id="newsession"><span class="aw-ic" id="ic-plus"></span>New chat</div>
+      <div class="newbtn" id="newsession" role="button" tabindex="0"><span class="aw-ic" id="ic-plus"></span>New chat</div>
       <div class="seclabel">Chats</div>
       <div id="sesslist"></div>
       <div class="seclabel cclabel">Claude Code <button class="ccref" id="ccrefresh" title="rescan sessions">⟳</button></div>
+      <div class="secsub">Sessions you started in the terminal — watch them live.</div>
       <div id="cclist"><div class="empty-side">Desktop app only — observe your live <code>claude</code> sessions here.</div></div>
     </aside>
     <div class="sideresize" id="sideresize" title="drag to resize"></div>
@@ -51,6 +52,8 @@
             <div class="emptyic" id="ic-empty"></div>
             <div class="emptyh">Drive Claude Code as a graph</div>
             <div class="emptyp">Type a prompt below to start a live <code>claude -p</code> session, or switch to <b>sample</b> to replay a captured transcript.</div>
+            <div class="emptyreq">Needs the <a href="https://docs.claude.com/en/docs/claude-code" target="_blank" rel="noreferrer">Claude Code CLI</a> installed &amp; signed in (<code>claude --version</code>).</div>
+            <div class="emptyhint">Drag to pan · scroll to zoom · right-click for a menu · <b>⌘K</b> to search</div>
           </div>
         </div>
         <div class="hudpanel" id="hud" style="display:none">
@@ -80,8 +83,8 @@
       <div class="promptbar">
         <div class="pb-box">
           <div class="pb-inputrow">
-            <input class="pinput" id="prompt" placeholder="Message Claude — each turn continues this lane…"/>
-            <button class="sendbtn" id="send"><span class="aw-ic" id="ic-up"></span></button>
+            <textarea class="pinput" id="prompt" rows="1" placeholder="Message Claude…  (Enter to send, Shift+Enter for a new line)"></textarea>
+            <button class="sendbtn" id="send" title="send (Enter)"><span class="aw-ic" id="ic-up"></span></button>
           </div>
           <div class="pb-toolbar">
             <div class="lanewrap" id="lanewrap">
@@ -127,6 +130,14 @@
   <div class="palbox">
     <input id="palinput" placeholder="Type a command or search chats…" autocomplete="off" spellcheck="false"/>
     <div class="pallist" id="pallist"></div>
+  </div>
+</div>
+<div class="toasts" id="toasts"></div>
+<div class="modal" id="modal" style="display:none">
+  <div class="modalbox" role="dialog" aria-modal="true">
+    <div class="modal-h" id="modalTitle"></div>
+    <div class="modal-b" id="modalBody"></div>
+    <div class="modal-actions" id="modalActions"></div>
   </div>
 </div>
 <script type="module" src="/src/main.js"></script>

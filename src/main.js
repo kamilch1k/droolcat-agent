@@ -15,6 +15,49 @@ import { mdChat } from "./md.js";
 
 const $ = (id) => document.getElementById(id);
 
+// ---- toasts + in-app modal (no native confirm; powers first-run consent) ----
+function toast(msg, { kind = "", actionLabel, onAction, timeout = 4500 } = {}) {
+  const host = $("toasts"); if (!host) return;
+  const el = document.createElement("div");
+  el.className = "toast" + (kind ? " " + kind : "");
+  const span = document.createElement("span"); span.textContent = msg; el.appendChild(span);
+  if (actionLabel) {
+    const b = document.createElement("button"); b.textContent = actionLabel;
+    b.onclick = () => { el.remove(); onAction && onAction(); };
+    el.appendChild(b);
+  }
+  host.appendChild(el);
+  if (timeout) setTimeout(() => el.remove(), timeout);
+  return el;
+}
+function modalConfirm({ title, body, confirmLabel = "Confirm", cancelLabel = "Cancel", danger = false } = {}) {
+  return new Promise((resolve) => {
+    $("modalTitle").textContent = title || "";
+    $("modalBody").innerHTML = body || "";
+    const acts = $("modalActions"); acts.innerHTML = "";
+    const cancel = document.createElement("button"); cancel.textContent = cancelLabel;
+    const ok = document.createElement("button"); ok.textContent = confirmLabel; ok.className = "primary" + (danger ? " danger" : "");
+    const close = (v) => { $("modal").style.display = "none"; document.removeEventListener("keydown", onKey, true); resolve(v); };
+    cancel.onclick = () => close(false);
+    ok.onclick = () => close(true);
+    acts.append(cancel, ok);
+    const onKey = (e) => { if (e.key === "Escape") { e.preventDefault(); close(false); } else if (e.key === "Enter") { e.preventDefault(); close(true); } };
+    document.addEventListener("keydown", onKey, true);
+    $("modal").style.display = "flex";
+    setTimeout(() => ok.focus(), 0);
+  });
+}
+const CONSENT_KEY = "droolcat.bypassConsent.v1";
+// grow the composer with its content (Claude Code-style), capped by CSS max-height.
+// An empty textarea misreports scrollHeight in this flex row, so for empty we just
+// clear the inline height and let the CSS 1-row default stand.
+function autoGrowPrompt() {
+  const t = $("prompt"); if (!t) return;
+  if (!t.value) { t.style.height = ""; return; }
+  t.style.height = "0px";
+  t.style.height = Math.min(168, t.scrollHeight) + "px";
+}
+
 $("ic-plus").innerHTML = I.plus;
 $("ic-up").innerHTML = I.up;
 $("ic-play").innerHTML = I.play;
@@ -305,6 +348,18 @@ async function sendPrompt(text) {
   const s = curChat();
   const lane = s.activeLane || "main";
 
+  // first live turn with permissions bypassed -> one-time, plain-language consent
+  if (tauri && s.edits !== false && !localStorage.getItem(CONSENT_KEY)) {
+    const folder = (s.cwd && s.cwd.trim()) || "your home folder";
+    const ok = await modalConfirm({
+      title: "Claude will act without asking",
+      body: `Droolcat runs Claude Code with <b>permissions bypassed</b> — it can read, edit, and run shell commands <b>without approving each step</b>, working in <code>${escapeHtml(folder)}</code>.<br><br>Point a chat at a specific project with the <b>+</b> button if you'd rather it not touch your home directory. You can switch to <b>ask</b> mode anytime with the red pill.`,
+      confirmLabel: "I understand — continue", cancelLabel: "Cancel", danger: true,
+    });
+    if (!ok) { toast("Nothing sent — bypass wasn't approved."); $("prompt").value = text; autoGrowPrompt(); return; }
+    try { localStorage.setItem(CONSENT_KEY, "1"); } catch {}
+  }
+
   // continuing an observed session hands it off to Droolcat: stop tailing, close
   // the open observed turn cleanly (no fake "Done." node), and let this turn
   // resume the real Claude session (laneClaudeId.main is its id)
@@ -505,15 +560,45 @@ function renderSessions() {
     const dot = running ? "var(--color-text-info)" : s.graph.turnCount ? "var(--color-text-success)" : "var(--color-border-secondary)";
     const d = document.createElement("div");
     d.className = "sessrow" + (i === cur ? " active" : "");
+    d.tabIndex = 0; d.setAttribute("role", "button"); d.title = "double-click to rename";
     d.innerHTML = `<span class="aw-ic">${I.branch}</span><span class="t">${escapeHtml(s.title)}</span>${s.observed ? '<span class="obspill">live</span>' : ""}<span class="dot" style="background:${dot}"></span><button class="sessdel" title="delete chat">×</button>`;
     d.onclick = () => switchSession(i);
+    d.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); switchSession(i); } else if (e.key === "F2") { e.preventDefault(); startRename(i, d); } };
+    d.ondblclick = (e) => { e.preventDefault(); if (!s.observed) startRename(i, d); };
     d.querySelector(".sessdel").onclick = (e) => { e.stopPropagation(); deleteSession(i); };
     h.appendChild(d);
   });
 }
-function deleteSession(i) {
+// inline-rename a chat: swap its title for an input, commit on Enter/blur
+function startRename(i, row) {
   const s = sessions[i]; if (!s) return;
-  if (!confirm(`Delete chat "${clip(s.title, 40)}"? This can't be undone.`)) return;
+  const span = row.querySelector("span.t"); if (!span) return;
+  const inp = document.createElement("input");
+  inp.className = "sessrename"; inp.value = s.title;
+  span.replaceWith(inp);
+  inp.focus(); inp.select();
+  const commit = () => {
+    const v = inp.value.trim();
+    if (v && v !== s.title) { s.title = clip(v, 80); s.titleEdited = true; scheduleSave(); if (i === cur) $("sesstitle").textContent = s.title; }
+    renderSessions();
+  };
+  inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); commit(); } else if (e.key === "Escape") { e.preventDefault(); renderSessions(); } };
+  inp.onblur = commit;
+  inp.onclick = (e) => e.stopPropagation();
+}
+async function deleteSession(i) {
+  const s = sessions[i]; if (!s) return;
+  const ok = await modalConfirm({ title: "Delete chat?", body: `Delete <b>${escapeHtml(clip(s.title, 50))}</b>? You can undo this for a few seconds.`, confirmLabel: "Delete", danger: true });
+  if (!ok) return;
+  const removed = s, removedAt = i;
+  doDeleteSession(i);
+  toast(`Deleted "${clip(removed.title, 30)}"`, { actionLabel: "Undo", timeout: 7000, onAction: () => {
+    sessions.splice(Math.min(removedAt, sessions.length), 0, removed);
+    cur = sessions.indexOf(removed); switchSession(cur);
+  } });
+}
+function doDeleteSession(i) {
+  const s = sessions[i]; if (!s) return;
   const wasCur = i === cur;
   if (wasCur && s.observed) stopObserving();
   if (runningChat === s.id) { runningChat = null; runningId = null; }
@@ -1066,9 +1151,24 @@ function paletteCommands() {
 function buildPaletteItems(q) {
   q = (q || "").toLowerCase().trim();
   const chats = sessions.map((s, i) => ({ sec: "Chats", label: s.title || "chat", hint: s.observed ? "live" : (s.graph.turnCount + "t"), run: () => switchSession(i) }));
-  let all = [...paletteCommands(), ...chats];
-  if (q) all = all.filter((it) => it.label.toLowerCase().includes(q));
-  return all.slice(0, 40);
+  const all = [...paletteCommands(), ...chats];
+  if (!q) return all.slice(0, 40);
+  const direct = all.filter((it) => it.label.toLowerCase().includes(q));
+  // cross-chat CONTENT search — look inside every chat's nodes, jump to the hit
+  const content = [];
+  for (let i = 0; i < sessions.length && content.length < 14; i++) {
+    const s = sessions[i];
+    for (const n of s.graph.nodes) {
+      const hay = String(n.text || n.summary || n.file || (n.type !== "lane" ? n.title : "") || "");
+      const idx = hay.toLowerCase().indexOf(q);
+      if (idx >= 0) {
+        const snippet = hay.slice(Math.max(0, idx - 16), idx + 46).replace(/\s+/g, " ").trim();
+        content.push({ sec: "Found in chats", label: snippet || (s.title || "chat"), hint: clip(s.title || "chat", 16), run: () => { switchSession(i); setTimeout(() => { if (canvas.model === s.graph) canvas.zoomToNode(n.id); }, 60); } });
+        break;   // one hit per chat keeps the list scannable
+      }
+    }
+  }
+  return [...direct, ...content].slice(0, 40);
 }
 function openPalette() {
   $("palette").style.display = "flex";
@@ -1120,8 +1220,13 @@ function saveSessions() {
       })),
     };
     localStorage.setItem(STORE, JSON.stringify(data));
-  } catch (e) { console.warn("save failed", e); }
+    saveWarned = false;
+  } catch (e) {
+    console.warn("save failed", e);
+    if (!saveWarned) { saveWarned = true; toast("Couldn't save — local storage is full. Delete old chats to free space.", { kind: "err", timeout: 8000 }); }
+  }
 }
+let saveWarned = false;
 function loadSessions() {
   try {
     const raw = localStorage.getItem(STORE);
@@ -1143,7 +1248,9 @@ function clip(s, n) { s = String(s || "").replace(/\s+/g, " ").trim(); return s.
 // A chat counts as a throwaway greeting if every prompt is a bare hello AND it
 // did no real work (no tools/subagents). The website chat survives — it starts
 // with "hi" but has tool calls and a real prompt.
-const GREETING = /^\s*(hi+|h?ey+|he?llo+|yo+|sup|heya|hiya|howdy|test+|good\s*(morning|afternoon|evening)|gm|gn)[\s!.,?]*$/i;
+// only UNAMBIGUOUS greetings — dropped "test/gm/gn/yo/sup" since those are
+// plausibly real chat topics and auto-deleting them would lose real work
+const GREETING = /^\s*(hi+|h?ey+|he?llo+|heya|hiya|howdy|good\s*(morning|afternoon|evening))[\s!.,?]*$/i;
 function isGreetingOnly(s) {
   const g = s.graph;
   if (g.nodes.some((n) => n.type === "tool" || n.type === "agent")) return false;
@@ -1155,7 +1262,9 @@ function isGreetingOnly(s) {
 // tool/subagent nodes). Title-based so "hi" chats with a trivial extra reply
 // still qualify; the no-work guard protects anything substantive.
 function isThrowawayGreeting(s) {
+  if (s.titleEdited) return false;                                      // user named it on purpose
   if (s.graph.nodes.some((n) => n.type === "tool" || n.type === "agent")) return false;
+  if (s.graph.turnCount > 1) return false;                             // a real back-and-forth, not a throwaway
   return GREETING.test(s.title || "");
 }
 // run on EVERY launch (not one-shot) so accumulated "hi" test chats keep getting
@@ -1181,14 +1290,18 @@ document.querySelectorAll("#srcsel button").forEach((b) =>
 document.querySelectorAll("#viewsel button").forEach((b) =>
   b.onclick = () => switchView(b.dataset.view));
 $("send").onclick = () => fireSend();
-$("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter") fireSend(); });
+// Enter sends, Shift+Enter inserts a newline (matches Claude Code + the panel composer)
+$("prompt").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); fireSend(); } });
+$("prompt").addEventListener("input", autoGrowPrompt);
 function fireSend() {
   const i = $("prompt"), v = i.value.trim();
   if (!v && source !== "sample") return;
   i.value = "";
+  autoGrowPrompt();
   sendPrompt(v);
 }
 $("newsession").onclick = () => newSession();
+$("newsession").onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); newSession(); } };
 $("ccrefresh").onclick = () => loadCcSessions();
 $("folder").addEventListener("change", () => { const s = curChat(); if (s) { s.cwd = $("folder").value.trim(); scheduleSave(); } });
 $("allowedits").addEventListener("change", () => { const s = curChat(); if (s) { s.edits = $("allowedits").checked; refreshLaneBar(); scheduleSave(); } });
