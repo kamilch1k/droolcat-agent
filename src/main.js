@@ -68,6 +68,7 @@ $("ic-mic").innerHTML = I.mic;
 $("ic-follow").innerHTML = I.follow;
 $("ic-cpsend").innerHTML = I.up;
 $("ic-companion").innerHTML = I.split;
+$("ic-companionapp").innerHTML = I.split;
 
 const canvas = new Canvas(
   {
@@ -746,6 +747,23 @@ async function startCompanion() {
     watchForCompanionSession(folder, info.launchedAt || Date.now());
   } catch (e) { setConn("err", "couldn't launch companion"); toast(String(e), { kind: "err", timeout: 8000 }); }
 }
+// side-by-side with the REAL Claude desktop app: snap it left, Droolcat right,
+// then mirror whichever session is active (the app writes the same files).
+async function startCompanionApp() {
+  const t = await getTauri();
+  closePlusMenu();
+  if (!t) { toast("Companion mode needs the desktop app."); return; }
+  setConn("run", "arranging Claude app + Droolcat…");
+  try {
+    const info = await t.invoke("arrange_with_claude_app");
+    if (!info.ok) { setConn(tauri ? "live" : "", "ready"); toast("Couldn't find the Claude app — open it, then try again.", { kind: "err", timeout: 8000 }); return; }
+    toast(info.positionedTerminal
+      ? "Side-by-side — Claude app on the left, Droolcat on the right. Work in Claude; it mirrors here."
+      : "Droolcat snapped right — press Win+← to put the Claude app on the left.",
+      { kind: "ok", timeout: 8000 });
+    watchForCompanionSession("", info.launchedAt || Date.now());   // mirror the active session (any folder)
+  } catch (e) { setConn("err", "couldn't arrange"); toast(String(e), { kind: "err", timeout: 8000 }); }
+}
 // poll for the session the left-side terminal creates, then mirror it
 function watchForCompanionSession(folder, since) {
   const gen = ++companionWatch;
@@ -1289,7 +1307,8 @@ function paletteCommands() {
     { sec: "Actions", label: "Code graph on the board", run: () => switchView("code") },
     { sec: "Actions", label: "Back to agents view", run: () => switchView("agents") },
     { sec: "Actions", label: "Refresh Claude Code sessions", run: () => loadCcSessions() },
-    { sec: "Actions", label: "Companion mode — real claude + live mirror", run: () => startCompanion() },
+    { sec: "Actions", label: "Companion — Claude app + live mirror", run: () => startCompanionApp() },
+    { sec: "Actions", label: "Companion — new claude terminal", run: () => startCompanion() },
   ];
 }
 function buildPaletteItems(q) {
@@ -1452,6 +1471,7 @@ $("allowedits").addEventListener("change", () => { const s = curChat(); if (s) {
 $("lanebtn").onclick = (e) => { e.stopPropagation(); closePlusMenu(); toggleLaneMenu(); };
 $("pbnew").onclick = (e) => { e.stopPropagation(); closeLaneMenu(); const w = plusWrap(); if (w) w.classList.toggle("open"); };
 $("plusnewlane").onclick = (e) => { e.stopPropagation(); closePlusMenu(); newLane(); };
+$("pluscompanionapp").onclick = (e) => { e.stopPropagation(); startCompanionApp(); };
 $("pluscompanion").onclick = (e) => { e.stopPropagation(); startCompanion(); };
 $("pbmic").onclick = () => voice.enter();
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && voice.active) voice.exit(); });

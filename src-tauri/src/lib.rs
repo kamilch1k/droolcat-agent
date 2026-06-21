@@ -461,11 +461,63 @@ mod win {
         pub fn GetForegroundWindow() -> isize;
         pub fn SetWindowPos(hwnd: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
         pub fn ShowWindow(hwnd: isize, cmd: i32) -> i32;
+        pub fn EnumWindows(cb: extern "system" fn(isize, isize) -> i32, lparam: isize) -> i32;
+        pub fn GetWindowThreadProcessId(hwnd: isize, pid: *mut u32) -> u32;
+        pub fn IsWindowVisible(hwnd: isize) -> i32;
+        pub fn GetWindowTextLengthW(hwnd: isize) -> i32;
+        pub fn GetWindowRect(hwnd: isize, rect: *mut Rect) -> i32;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        pub fn OpenProcess(access: u32, inherit: i32, pid: u32) -> isize;
+        pub fn QueryFullProcessImageNameW(proc: isize, flags: u32, buf: *mut u16, size: *mut u32) -> i32;
+        pub fn CloseHandle(h: isize) -> i32;
     }
     pub const SPI_GETWORKAREA: u32 = 0x0030;
     pub const SWP_NOZORDER: u32 = 0x0004;
     pub const SWP_NOACTIVATE: u32 = 0x0010;
     pub const SW_RESTORE: i32 = 9;
+    pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+}
+
+// find the largest visible top-level window owned by a process whose exe
+// basename matches (case-insensitive) — used to locate the Claude desktop app.
+#[cfg(windows)]
+struct Finder { exe: String, best: isize, best_area: i64 }
+
+#[cfg(windows)]
+extern "system" fn enum_cb(hwnd: isize, lparam: isize) -> i32 {
+    unsafe {
+        let f = &mut *(lparam as *mut Finder);
+        if win::IsWindowVisible(hwnd) == 0 || win::GetWindowTextLengthW(hwnd) == 0 { return 1; }
+        let mut pid: u32 = 0;
+        win::GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid == 0 { return 1; }
+        let h = win::OpenProcess(win::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h == 0 { return 1; }
+        let mut buf = [0u16; 520];
+        let mut size = buf.len() as u32;
+        let ok = win::QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut size);
+        win::CloseHandle(h);
+        if ok == 0 { return 1; }
+        let path = String::from_utf16_lossy(&buf[..size as usize]);
+        let base = path.rsplit(|c| c == '\\' || c == '/').next().unwrap_or("").to_lowercase();
+        if base == f.exe {
+            let mut r = win::Rect { left: 0, top: 0, right: 0, bottom: 0 };
+            if win::GetWindowRect(hwnd, &mut r) != 0 {
+                let area = (r.right - r.left) as i64 * (r.bottom - r.top) as i64;
+                if area > f.best_area { f.best_area = area; f.best = hwnd; }
+            }
+        }
+    }
+    1
+}
+
+#[cfg(windows)]
+fn find_app_window(exe: &str) -> Option<isize> {
+    let mut f = Finder { exe: exe.to_lowercase(), best: 0, best_area: 0 };
+    unsafe { win::EnumWindows(enum_cb, &mut f as *mut _ as isize); }
+    if f.best != 0 { Some(f.best) } else { None }
 }
 
 #[cfg(windows)]
@@ -534,6 +586,54 @@ fn companion_layout(app: AppHandle, cwd: String) -> Result<CompanionInfo, String
     }
 }
 
+/// Side-by-side with the REAL Claude desktop app: snap its window to the left
+/// half and Droolcat to the right half. The frontend then mirrors whichever
+/// session is active. The Claude app writes the same ~/.claude/projects files
+/// Droolcat already observes, so no relaunch of the session is needed.
+#[tauri::command]
+fn arrange_with_claude_app(app: AppHandle) -> Result<CompanionInfo, String> {
+    let launched_at = millis() as u64;
+    #[cfg(windows)]
+    {
+        let (wx, wy, ww, wh) = primary_work_area();
+        let half = (ww / 2).max(480);
+        // find the Claude app; if it isn't running, try to launch it, then wait
+        let mut found = find_app_window("claude.exe");
+        if found.is_none() {
+            let _ = Command::new("explorer.exe")
+                .arg("shell:AppsFolder\\Claude_pzs8sxrjxfjjc!Claude")
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn();
+            for _ in 0..24 {
+                thread::sleep(std::time::Duration::from_millis(300));
+                found = find_app_window("claude.exe");
+                if found.is_some() { break; }
+            }
+        }
+        // Droolcat -> right half
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.unmaximize();
+            let _ = w.set_position(tauri::PhysicalPosition::new(wx + half, wy));
+            let _ = w.set_size(tauri::PhysicalSize::new(half as u32, wh as u32));
+        }
+        // Claude app -> left half
+        let mut positioned = false;
+        if let Some(hwnd) = found {
+            unsafe {
+                win::ShowWindow(hwnd, win::SW_RESTORE);
+                let r = win::SetWindowPos(hwnd, 0, wx, wy, half, wh, win::SWP_NOZORDER | win::SWP_NOACTIVATE);
+                positioned = r != 0;
+            }
+        }
+        return Ok(CompanionInfo { ok: found.is_some(), launched_at, positioned_terminal: positioned });
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Err("Companion mode is Windows-only for now.".into())
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
@@ -546,7 +646,8 @@ pub fn run() {
             read_session_since,
             git_graph,
             claude_path,
-            companion_layout
+            companion_layout,
+            arrange_with_claude_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
