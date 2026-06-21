@@ -447,6 +447,93 @@ async fn git_graph(cwd: String, limit: Option<usize>) -> Result<Vec<GitCommit>, 
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+// ---- Companion split-screen mode -----------------------------------------
+// Snap Droolcat to the right half of the screen and launch a REAL interactive
+// `claude` terminal on the left, in the chosen folder. The frontend then
+// auto-observes the session that terminal creates and mirrors it as the graph.
+#[cfg(windows)]
+mod win {
+    #[repr(C)]
+    pub struct Rect { pub left: i32, pub top: i32, pub right: i32, pub bottom: i32 }
+    #[link(name = "user32")]
+    extern "system" {
+        pub fn SystemParametersInfoW(action: u32, uiparam: u32, pvparam: *mut core::ffi::c_void, winini: u32) -> i32;
+        pub fn GetForegroundWindow() -> isize;
+        pub fn SetWindowPos(hwnd: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
+        pub fn ShowWindow(hwnd: isize, cmd: i32) -> i32;
+    }
+    pub const SPI_GETWORKAREA: u32 = 0x0030;
+    pub const SWP_NOZORDER: u32 = 0x0004;
+    pub const SWP_NOACTIVATE: u32 = 0x0010;
+    pub const SW_RESTORE: i32 = 9;
+}
+
+#[cfg(windows)]
+fn primary_work_area() -> (i32, i32, i32, i32) {
+    unsafe {
+        let mut r = win::Rect { left: 0, top: 0, right: 1920, bottom: 1040 };
+        let ok = win::SystemParametersInfoW(
+            win::SPI_GETWORKAREA, 0, &mut r as *mut _ as *mut core::ffi::c_void, 0,
+        );
+        if ok == 0 { return (0, 0, 1920, 1040); }
+        (r.left, r.top, r.right - r.left, r.bottom - r.top)
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompanionInfo {
+    ok: bool,
+    launched_at: u64,
+    positioned_terminal: bool,
+}
+
+/// Arrange the screen for companion mode and launch a real `claude` terminal.
+#[tauri::command]
+fn companion_layout(app: AppHandle, cwd: String) -> Result<CompanionInfo, String> {
+    let launched_at = millis() as u64;
+    #[cfg(windows)]
+    {
+        let (wx, wy, ww, wh) = primary_work_area();
+        let half = (ww / 2).max(480);
+        // remember what was focused so we only move the terminal, never some
+        // unrelated window if it never grabbed focus
+        let before = unsafe { win::GetForegroundWindow() };
+        // 1) Droolcat -> right half
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.unmaximize();
+            let _ = w.set_position(tauri::PhysicalPosition::new(wx + half, wy));
+            let _ = w.set_size(tauri::PhysicalSize::new(half as u32, wh as u32));
+        }
+        // 2) launch a real interactive claude terminal in the folder
+        let claude = find_claude();
+        let dir = if cwd.trim().is_empty() {
+            std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_else(|_| ".".into())
+        } else { cwd.clone() };
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/c", "start", "Claude Code Session", "/D", &dir, "cmd", "/k", &claude]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.spawn().map_err(|e| format!("couldn't launch the terminal: {e}"))?;
+        // 3) best-effort: snap the new terminal to the left half
+        thread::sleep(std::time::Duration::from_millis(850));
+        let mut positioned = false;
+        unsafe {
+            let fg = win::GetForegroundWindow();
+            if fg != 0 && fg != before {
+                win::ShowWindow(fg, win::SW_RESTORE);
+                let r = win::SetWindowPos(fg, 0, wx, wy, half, wh, win::SWP_NOZORDER | win::SWP_NOACTIVATE);
+                positioned = r != 0;
+            }
+        }
+        Ok(CompanionInfo { ok: true, launched_at, positioned_terminal: positioned })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, cwd);
+        Err("Companion mode is Windows-only for now.".into())
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
@@ -458,7 +545,8 @@ pub fn run() {
             read_session_tail,
             read_session_since,
             git_graph,
-            claude_path
+            claude_path,
+            companion_layout
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

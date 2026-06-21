@@ -67,6 +67,7 @@ $("ic-newlane2").innerHTML = I.plus;
 $("ic-mic").innerHTML = I.mic;
 $("ic-follow").innerHTML = I.follow;
 $("ic-cpsend").innerHTML = I.up;
+$("ic-companion").innerHTML = I.split;
 
 const canvas = new Canvas(
   {
@@ -725,6 +726,50 @@ async function observeSession(info) {
   switchSession(sessions.indexOf(s));   // switchSession arms observation for observed chats
 }
 
+// ---- companion split-screen mode -----------------------------------------
+// Snap Droolcat right, launch a real `claude` terminal left (in the chosen
+// folder), then auto-detect and live-mirror that session here.
+const normPath = (p) => String(p || "").replace(/[\\/]+/g, "/").replace(/\/+$/, "").toLowerCase();
+let companionWatch = 0;
+async function startCompanion() {
+  const t = await getTauri();
+  closePlusMenu();
+  if (!t) { toast("Companion mode needs the desktop app (it launches a real terminal)."); return; }
+  const folder = ($("folder").value || (curChat() && curChat().cwd) || "").trim();
+  setConn("run", "arranging the split screen…");
+  try {
+    const info = await t.invoke("companion_layout", { cwd: folder });
+    toast(info.positionedTerminal
+      ? "Companion launched — a real claude terminal is on the left."
+      : "Companion launched — press Win+← to snap the terminal to the left half.",
+      { kind: "ok", timeout: 8000 });
+    watchForCompanionSession(folder, info.launchedAt || Date.now());
+  } catch (e) { setConn("err", "couldn't launch companion"); toast(String(e), { kind: "err", timeout: 8000 }); }
+}
+// poll for the session the left-side terminal creates, then mirror it
+function watchForCompanionSession(folder, since) {
+  const gen = ++companionWatch;
+  const want = normPath(folder);
+  setConn("run", "waiting for the claude session…");
+  let tries = 0;
+  const tick = async () => {
+    if (gen !== companionWatch) return;
+    const t = await getTauri(); if (!t) return;
+    tries++;
+    try {
+      const list = await t.invoke("list_claude_sessions", { limit: 50 });
+      const match = (list || [])
+        .filter((x) => (!want || normPath(x.cwd) === want) && (x.mtimeMs || 0) >= since - 4000)
+        .sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0))[0];
+      if (match) { setConn("live", "mirroring the live session"); toast("Found the session — mirroring it live.", { kind: "ok" }); observeSession(match); return; }
+    } catch {}
+    if (gen !== companionWatch) return;
+    if (tries < 60) setTimeout(tick, 1500);
+    else setConn(tauri ? "live" : "", "no session yet — type a prompt in the terminal");
+  };
+  setTimeout(tick, 1200);
+}
+
 async function startObserving(s) {
   stopObserving();
   const gen = observeGen;
@@ -1244,6 +1289,7 @@ function paletteCommands() {
     { sec: "Actions", label: "Code graph on the board", run: () => switchView("code") },
     { sec: "Actions", label: "Back to agents view", run: () => switchView("agents") },
     { sec: "Actions", label: "Refresh Claude Code sessions", run: () => loadCcSessions() },
+    { sec: "Actions", label: "Companion mode — real claude + live mirror", run: () => startCompanion() },
   ];
 }
 function buildPaletteItems(q) {
@@ -1406,6 +1452,7 @@ $("allowedits").addEventListener("change", () => { const s = curChat(); if (s) {
 $("lanebtn").onclick = (e) => { e.stopPropagation(); closePlusMenu(); toggleLaneMenu(); };
 $("pbnew").onclick = (e) => { e.stopPropagation(); closeLaneMenu(); const w = plusWrap(); if (w) w.classList.toggle("open"); };
 $("plusnewlane").onclick = (e) => { e.stopPropagation(); closePlusMenu(); newLane(); };
+$("pluscompanion").onclick = (e) => { e.stopPropagation(); startCompanion(); };
 $("pbmic").onclick = () => voice.enter();
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && voice.active) voice.exit(); });
 $("pbmode").onclick = () => { const s = curChat(); if (!s) return; s.edits = !s.edits; $("allowedits").checked = s.edits; refreshLaneBar(); scheduleSave(); };
