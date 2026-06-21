@@ -654,7 +654,19 @@ export class Canvas {
     this.cam.y = r.height / 2 - (n.y + n.h / 2) * s;
     this._easeCam(); this._applyCam();
   }
-  goLatest() { const m = this.model; if (m && m.nodes.length) this.panToNode(m.nodes[m.nodes.length - 1].id); }
+  // jump to the newest node AND zoom in to a readable level (text legible),
+  // framing it a little below center so there's context above. Doesn't touch
+  // autoFit, so it composes with follow.
+  goLatest() {
+    const m = this.model; if (!m || !m.nodes.length) return;
+    const n = m.nodes[m.nodes.length - 1];
+    const r = this.viewport.getBoundingClientRect(); if (r.width < 2) return;
+    const s = Math.min(1.5, Math.max(0.9, (r.width * 0.5) / n.w));
+    this.cam.s = s;
+    this.cam.x = r.width / 2 - (n.x + n.w / 2) * s;
+    this.cam.y = r.height * 0.62 - (n.y + n.h / 2) * s;
+    this._easeCam(); this._applyCam();
+  }
   goFirst() { const m = this.model; if (m && m.nodes.length) this.panToNode(m.nodes[0].id); }
 
   // tidy the board: drop manual lane drags so lanes snap back to auto-layout

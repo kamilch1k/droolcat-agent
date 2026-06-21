@@ -827,7 +827,7 @@ async function startObserving(s) {
     s.graph.reset();
     s.graph.ingestTranscript(trimToLastTurns(parseJsonl(tail.lines), 4));
     s.observed.offset = tail.offset;
-    if (canvas.model === s.graph) { canvas.sync(); autoFit = true; canvas.fit(); }
+    if (canvas.model === s.graph) { canvas.sync(); autoFit = true; canvas.goLatest(); }   // land zoomed-in on the latest, then follow
     renderSessions();
     if (lastCcList.length) renderCcList(lastCcList);
   } catch (e) { console.warn("observe tail failed", e); setConn("err", "couldn't read that session"); }

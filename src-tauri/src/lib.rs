@@ -546,6 +546,24 @@ fn primary_work_area() -> (i32, i32, i32, i32) {
     }
 }
 
+// position the main window so its OUTER bounds (title bar + borders) fit the
+// given rect. Tauri's set_size sets the INNER size, so subtract the frame —
+// otherwise the title bar makes the window taller than the screen.
+#[cfg(windows)]
+fn tile_main(app: &AppHandle, x: i32, y: i32, w: i32, h: i32) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unmaximize();
+        let (mut fw, mut fh) = match (win.outer_size(), win.inner_size()) {
+            (Ok(o), Ok(i)) => (o.width as i32 - i.width as i32, o.height as i32 - i.height as i32),
+            _ => (16, 40),
+        };
+        if !(0..60).contains(&fw) { fw = 16; }          // guard against a maximized-state reading
+        if !(0..120).contains(&fh) { fh = 40; }
+        let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+        let _ = win.set_size(tauri::PhysicalSize::new((w - fw).max(320) as u32, (h - fh).max(240) as u32));
+    }
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CompanionInfo {
@@ -566,11 +584,7 @@ fn companion_layout(app: AppHandle, cwd: String) -> Result<CompanionInfo, String
         // unrelated window if it never grabbed focus
         let before = unsafe { win::GetForegroundWindow() };
         // 1) Droolcat -> right half
-        if let Some(w) = app.get_webview_window("main") {
-            let _ = w.unmaximize();
-            let _ = w.set_position(tauri::PhysicalPosition::new(wx + half, wy));
-            let _ = w.set_size(tauri::PhysicalSize::new(half as u32, wh as u32));
-        }
+        tile_main(&app, wx + half, wy, half, wh);
         // 2) launch a real interactive claude terminal in the folder
         let claude = find_claude();
         let dir = if cwd.trim().is_empty() {
@@ -627,11 +641,7 @@ fn arrange_with_claude_app(app: AppHandle) -> Result<CompanionInfo, String> {
             }
         }
         // Droolcat -> right half
-        if let Some(w) = app.get_webview_window("main") {
-            let _ = w.unmaximize();
-            let _ = w.set_position(tauri::PhysicalPosition::new(wx + half, wy));
-            let _ = w.set_size(tauri::PhysicalSize::new(half as u32, wh as u32));
-        }
+        tile_main(&app, wx + half, wy, half, wh);
         // Claude app -> left half
         let mut positioned = false;
         if let Some(hwnd) = found {
