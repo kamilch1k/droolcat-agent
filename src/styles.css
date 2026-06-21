@@ -97,6 +97,9 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 .replay{background:var(--color-background-secondary);border:0.5px solid var(--color-border-secondary);border-radius:var(--radius);padding:6px 11px;font-size:12.5px;display:flex;align-items:center;gap:6px}
 .replay:hover{background:var(--color-background-tertiary)}
 .replay.active{background:var(--color-text-primary);color:#fff;border-color:var(--color-text-primary)}
+.replay.companion{color:var(--color-text-info);border-color:var(--color-border-info);font-weight:500}
+.replay.companion:hover{background:var(--color-background-info)}
+.replay.companion .aw-ic{color:var(--color-text-info)}
 .pinput.repo{flex:0 0 220px;font-family:var(--font-mono);font-size:12px}
 .lanesform{display:flex;flex-direction:column;gap:8px}
 .lanesform textarea{width:100%;border:0.5px solid var(--color-border-secondary);border-radius:var(--radius);font-family:var(--font-mono);font-size:12px;padding:9px;resize:vertical;min-height:120px}

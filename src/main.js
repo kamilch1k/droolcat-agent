@@ -69,6 +69,7 @@ $("ic-follow").innerHTML = I.follow;
 $("ic-cpsend").innerHTML = I.up;
 $("ic-companion").innerHTML = I.split;
 $("ic-companionapp").innerHTML = I.split;
+$("ic-companionbtn").innerHTML = I.split;
 
 const canvas = new Canvas(
   {
@@ -761,8 +762,29 @@ async function startCompanionApp() {
       ? "Side-by-side — Claude app on the left, Droolcat on the right. Work in Claude; it mirrors here."
       : "Droolcat snapped right — press Win+← to put the Claude app on the left.",
       { kind: "ok", timeout: 8000 });
-    watchForCompanionSession("", info.launchedAt || Date.now());   // mirror the active session (any folder)
+    mirrorActiveSession(info.launchedAt || Date.now());
   } catch (e) { setConn("err", "couldn't arrange"); toast(String(e), { kind: "err", timeout: 8000 }); }
+}
+// grab the session you're actively using in Claude (newest, recent) and mirror it
+function mirrorActiveSession(since) {
+  const gen = ++companionWatch;
+  setConn("run", "finding your Claude session…");
+  let tries = 0;
+  const tick = async () => {
+    if (gen !== companionWatch) return;
+    const t = await getTauri(); if (!t) return;
+    tries++;
+    try {
+      const list = await t.invoke("list_claude_sessions", { limit: 50 });
+      const recent = (list || []).filter((x) => (x.mtimeMs || 0) > since - 900000).sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
+      const active = recent.find((x) => (x.mtimeMs || 0) >= since - 4000) || recent[0];   // prefer just-touched, else most recent
+      if (active) { setConn("live", "mirroring your Claude session"); observeSession(active); return; }
+    } catch {}
+    if (gen !== companionWatch) return;
+    if (tries < 60) setTimeout(tick, 1500);
+    else setConn(tauri ? "live" : "", "no recent session — start a chat in Claude");
+  };
+  setTimeout(tick, 800);
 }
 // poll for the session the left-side terminal creates, then mirror it
 function watchForCompanionSession(folder, since) {
@@ -1478,6 +1500,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && voice.ac
 $("pbmode").onclick = () => { const s = curChat(); if (!s) return; s.edits = !s.edits; $("allowedits").checked = s.edits; refreshLaneBar(); scheduleSave(); };
 $("pbmodel").onclick = (e) => { e.stopPropagation(); closeLaneMenu(); closePlusMenu(); toggleModelMenu(); };
 $("panelbtn").onclick = () => toggleHud();
+$("companionbtn").onclick = () => startCompanionApp();
 $("chatbtn").onclick = () => toggleChatPanel();
 $("chatclose").onclick = () => toggleChatPanel();
 document.querySelectorAll("#cptabs button[data-cp]").forEach((b) => b.onclick = () => setPanelTab(b.dataset.cp));

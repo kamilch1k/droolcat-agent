@@ -465,6 +465,7 @@ mod win {
         pub fn GetWindowThreadProcessId(hwnd: isize, pid: *mut u32) -> u32;
         pub fn IsWindowVisible(hwnd: isize) -> i32;
         pub fn GetWindowTextLengthW(hwnd: isize) -> i32;
+        pub fn GetWindowTextW(hwnd: isize, buf: *mut u16, max: i32) -> i32;
         pub fn GetWindowRect(hwnd: isize, rect: *mut Rect) -> i32;
     }
     #[link(name = "kernel32")]
@@ -480,29 +481,42 @@ mod win {
     pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 }
 
-// find the largest visible top-level window owned by a process whose exe
-// basename matches (case-insensitive) — used to locate the Claude desktop app.
+// find the largest visible top-level window for an app — matched first by exact
+// window TITLE (robust: needs no OpenProcess, which a packaged app can deny),
+// then by the owning process's exe basename. Used to locate the Claude app.
 #[cfg(windows)]
-struct Finder { exe: String, best: isize, best_area: i64 }
+struct Finder { title: String, exe: String, best: isize, best_area: i64 }
 
 #[cfg(windows)]
 extern "system" fn enum_cb(hwnd: isize, lparam: isize) -> i32 {
     unsafe {
         let f = &mut *(lparam as *mut Finder);
-        if win::IsWindowVisible(hwnd) == 0 || win::GetWindowTextLengthW(hwnd) == 0 { return 1; }
-        let mut pid: u32 = 0;
-        win::GetWindowThreadProcessId(hwnd, &mut pid);
-        if pid == 0 { return 1; }
-        let h = win::OpenProcess(win::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if h == 0 { return 1; }
-        let mut buf = [0u16; 520];
-        let mut size = buf.len() as u32;
-        let ok = win::QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut size);
-        win::CloseHandle(h);
-        if ok == 0 { return 1; }
-        let path = String::from_utf16_lossy(&buf[..size as usize]);
-        let base = path.rsplit(|c| c == '\\' || c == '/').next().unwrap_or("").to_lowercase();
-        if base == f.exe {
+        if win::IsWindowVisible(hwnd) == 0 { return 1; }
+        let tlen = win::GetWindowTextLengthW(hwnd);
+        if tlen == 0 { return 1; }
+        let mut tbuf = vec![0u16; (tlen as usize) + 2];
+        let n = win::GetWindowTextW(hwnd, tbuf.as_mut_ptr(), tbuf.len() as i32);
+        let title = String::from_utf16_lossy(&tbuf[..n as usize]);
+        let mut matched = title.eq_ignore_ascii_case(&f.title);
+        if !matched {
+            // fall back to the owning process exe basename
+            let mut pid: u32 = 0;
+            win::GetWindowThreadProcessId(hwnd, &mut pid);
+            if pid != 0 {
+                let h = win::OpenProcess(win::PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+                if h != 0 {
+                    let mut buf = [0u16; 520];
+                    let mut size = buf.len() as u32;
+                    if win::QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut size) != 0 {
+                        let path = String::from_utf16_lossy(&buf[..size as usize]);
+                        let base = path.rsplit(|c| c == '\\' || c == '/').next().unwrap_or("").to_lowercase();
+                        matched = base == f.exe;
+                    }
+                    win::CloseHandle(h);
+                }
+            }
+        }
+        if matched {
             let mut r = win::Rect { left: 0, top: 0, right: 0, bottom: 0 };
             if win::GetWindowRect(hwnd, &mut r) != 0 {
                 let area = (r.right - r.left) as i64 * (r.bottom - r.top) as i64;
@@ -514,8 +528,8 @@ extern "system" fn enum_cb(hwnd: isize, lparam: isize) -> i32 {
 }
 
 #[cfg(windows)]
-fn find_app_window(exe: &str) -> Option<isize> {
-    let mut f = Finder { exe: exe.to_lowercase(), best: 0, best_area: 0 };
+fn find_app_window(title: &str, exe: &str) -> Option<isize> {
+    let mut f = Finder { title: title.to_string(), exe: exe.to_lowercase(), best: 0, best_area: 0 };
     unsafe { win::EnumWindows(enum_cb, &mut f as *mut _ as isize); }
     if f.best != 0 { Some(f.best) } else { None }
 }
@@ -597,8 +611,10 @@ fn arrange_with_claude_app(app: AppHandle) -> Result<CompanionInfo, String> {
     {
         let (wx, wy, ww, wh) = primary_work_area();
         let half = (ww / 2).max(480);
-        // find the Claude app; if it isn't running, try to launch it, then wait
-        let mut found = find_app_window("claude.exe");
+        // find the Claude app window (by title, then process). Only if it is
+        // genuinely not running do we launch it — re-activating a running app
+        // is what threw the RPC/"server not accessible" error before.
+        let mut found = find_app_window("Claude", "claude.exe");
         if found.is_none() {
             let _ = Command::new("explorer.exe")
                 .arg("shell:AppsFolder\\Claude_pzs8sxrjxfjjc!Claude")
@@ -606,7 +622,7 @@ fn arrange_with_claude_app(app: AppHandle) -> Result<CompanionInfo, String> {
                 .spawn();
             for _ in 0..24 {
                 thread::sleep(std::time::Duration::from_millis(300));
-                found = find_app_window("claude.exe");
+                found = find_app_window("Claude", "claude.exe");
                 if found.is_some() { break; }
             }
         }
