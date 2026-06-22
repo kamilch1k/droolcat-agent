@@ -200,7 +200,7 @@ function switchSession(i) {
   if (panelOpen) renderPanel();
   renderSessions();
   canvas.sync();
-  canvas.fit();
+  canvas.goLatest();   // land zoomed-in on the latest nodes when switching chats
   scheduleSave();
   pump();   // resume any Board-Helper-queued runs waiting on this chat
   stopObserving();

@@ -241,9 +241,9 @@ export class Canvas {
       if (m.headline) {
         this.headpill.className = "aw-pill";
         this.headpill.textContent = m.headline;
-      } else if (s.busy) {
+      } else if (s.busy || s.running > 0) {
         this.headpill.className = "aw-pill p-info";
-        this.headpill.textContent = "working…";
+        this.headpill.textContent = s.running > 0 ? `working… (${s.running})` : "working…";
       } else if (s.turns > 0) {
         this.headpill.className = "aw-pill p-success";
         this.headpill.textContent = `${s.turns} turn${s.turns > 1 ? "s" : ""}`;
@@ -337,12 +337,11 @@ export class Canvas {
       return `<div class="row"><span class="aw-ic">${I.user}</span><span class="lbl">You</span><span class="meta" style="margin-left:auto">turn ${n.turn || 1}</span></div>
         <div class="prompttext">${esc(n.text || "")}</div>`;
     if (n.type === "say") {
-      const long = (n.text || "").length > 480; // expanding reveals meaningfully more
-      const btn = long ? `<button class="outbtn">${n.expanded ? "▴ less" : "▾ more"}</button>` : "";
       const head = (n.text || "").length > 180 ? summarize(n.text) : "";
       const sum = head ? `<div class="node-sum">${esc(head)}</div>` : "";
+      // ponytail: full text always; node height is measured so layout adapts
       return `<div class="row"><span class="aw-ic">${I.orch}</span><span class="lbl">Claude</span>${this._copyBtn()}</div>${sum}
-        <div class="saytext md${n.expanded ? " expanded" : long ? " clamped" : ""}">${mdToHtml(n.text || "")}${n.status === "run" ? '<span class="caret"></span>' : ""}</div>${btn}`;
+        <div class="saytext md">${mdToHtml(n.text || "")}${n.status === "run" ? '<span class="caret"></span>' : ""}</div>`;
     }
     if (n.type === "think") {
       const long = (n.text || "").length > 360;
