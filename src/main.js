@@ -7,7 +7,7 @@ import "@fontsource-variable/inter";
 import "@fontsource-variable/jetbrains-mono";
 import "./styles.css";
 import { I } from "./icons.js";
-import { GraphModel, layout } from "./graph.js";
+import { GraphModel, layout, fmtTokens } from "./graph.js";
 import { CodeGraphModel } from "./codegraph.js";
 import { Canvas } from "./canvas.js";
 import { VoiceMode } from "./voice.js";
@@ -368,6 +368,7 @@ function scheduleSync() {
     syncQueued = false;
     canvas.sync(); // canvas.sync() measures card heights + lays out the agent graph itself
     renderSessions();
+    renderToolMeta();   // keep the model + context ring current as the session grows
     if (panelOpen && panelTab === "chat") renderConversation();
     if (autoFit) {
       if (homePending) { homePending = false; canvas.home(); }      // first turn: anchor at top
@@ -894,6 +895,21 @@ function refreshLaneBar() {
   mode.title = bypass ? "bypass permissions — edits run without asking (click to require asking)" : "ask permissions (click to bypass)";
   $("pbmodel").textContent = modelLabel(s);
   if (laneWrap() && laneWrap().classList.contains("open")) buildLaneMenu();
+  renderToolMeta();
+}
+// model chip + context-window ring in the top bar
+function renderToolMeta() {
+  const wrap = $("toolmeta"); if (!wrap) return;
+  const s = curChat();
+  if (!s) { wrap.style.display = "none"; return; }
+  const lane = s.graph.lanes[s.activeLane || "main"];
+  const h = lane && s.graph.byId[lane.headerId];
+  wrap.style.display = "flex";
+  $("tmModel").textContent = shortModel(s.model || s.graph.meta.pickedModel || s.graph.meta.model || (h && h.model) || "claude");
+  const tok = (h && h.ctxTokens) || 0;
+  const pct = Math.min(100, tok / 2000);     // 200k window -> tokens/2000 = %
+  $("tmRingFg").style.strokeDashoffset = (44 * (1 - pct / 100)).toFixed(1);
+  $("tmRing").title = tok ? `context ${fmtTokens(tok)} / 200k (${pct.toFixed(0)}%)` : "context window";
 }
 
 const MODELS = [

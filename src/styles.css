@@ -82,8 +82,14 @@ button{font-family:inherit;color:inherit;cursor:pointer}
 .aw-ic{display:inline-flex;color:var(--color-text-secondary)}.aw-ic svg{display:block}
 
 .col{flex:1;min-width:0;display:flex;flex-direction:column}
-.toolbar{display:flex;align-items:center;gap:9px;padding:9px 14px;border-bottom:0.5px solid var(--color-border-tertiary)}
-.toolbar .h{font-size:13px;font-weight:500}
+.toolbar{display:flex;align-items:center;gap:7px;padding:9px 12px;border-bottom:0.5px solid var(--color-border-tertiary)}
+.toolbar .h{font-size:13px;font-weight:500;flex:0 1 auto;min-width:36px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.toolmeta{display:flex;align-items:center;gap:6px;flex:none}
+.tm-model{font-family:var(--font-mono);font-size:11px;color:var(--color-text-secondary);white-space:nowrap}
+.tm-ring{width:20px;height:20px;flex:none}
+.tm-ring svg{width:20px;height:20px;transform:rotate(-90deg)}
+.tm-bg{fill:none;stroke:var(--color-border-tertiary);stroke-width:2.4}
+.tm-fg{fill:none;stroke:var(--color-text-info);stroke-width:2.4;stroke-linecap:round;stroke-dasharray:44;stroke-dashoffset:44;transition:stroke-dashoffset .35s}
 .aw-pill{font-size:11px;padding:2px 8px;border-radius:var(--radius);font-weight:500;white-space:nowrap;display:inline-flex;align-items:center;gap:4px}
 .p-info{background:var(--color-background-info);color:var(--color-text-info)}
 .p-success{background:var(--color-background-success);color:var(--color-text-success)}
